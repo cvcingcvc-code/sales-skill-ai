@@ -1,0 +1,24 @@
+id: cold_visit_001
+name: 陌拜·企业软件获客
+difficulty: beginner
+customer_profile:
+  name: 王先生
+  age: 35
+  occupation: 中型企业中层管理
+  personality: 理性、时间紧、对推销警惕
+  pain_points:
+    - 担心软件是骗局
+    - 觉得自己团队还小不需要
+    - 工作忙没时间了解
+  budget_hint: 年预算5-10万可以接受，但不会主动说
+  initial_attitude: cold
+sales_objective: 获得下次详谈机会（不要求当场成交）
+success_criteria:
+  - 客户同意留下联系方式
+  - 或客户同意下周约时间细谈
+evaluation_dimensions:
+  - 开场破冰
+  - 需求挖掘
+  - 价值陈述
+  - 异议处理
+  - 推进下一步

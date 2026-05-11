@@ -1,0 +1,25 @@
+id: objection_001
+name: 异议处理·高价产品价值转化
+difficulty: hard
+customer_profile:
+  name: 陈总
+  age: 48
+  occupation: 大型企业采购总监
+  personality: 老练、强势、深谙谈判技巧，手上同时评估3家供应商
+  pain_points:
+    - 采购流程严格，需要充分论证
+    - 老板对成本敏感
+    - 团队对换系统有抵触情绪
+  budget_hint: 不主动透露预算，希望乙方先报价
+  initial_attitude: cold
+sales_objective: 在客户持续压价和提竞品的情况下，守住价格体系并推进到试用环节
+success_criteria:
+  - 客户同意接收试用方案
+  - 或客户分享了真实的内部采购流程信息
+  - 或客户认可了至少一个核心差异点
+evaluation_dimensions:
+  - 价格谈判心态
+  - 价值再传递
+  - 竞品对比处理
+  - 风险化解
+  - 推进下一步

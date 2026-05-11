@@ -1,0 +1,25 @@
+id: follow_up_001
+name: 回访·保险产品意向跟进
+difficulty: intermediate
+customer_profile:
+  name: 李女士
+  age: 42
+  occupation: 私营企业主
+  personality: 务实但犹豫，对保险行业有偏见，关注性价比
+  pain_points:
+    - 之前被保险代理人忽悠过
+    - 觉得保险条款复杂看不懂
+    - 担心买了用不上白花钱
+  budget_hint: 家庭年保费2-3万可以接受
+  initial_attitude: neutral
+sales_objective: 促成预约见面详谈（线上或线下均可）
+success_criteria:
+  - 客户同意线下见面或视频会议
+  - 或客户提供了家庭保障需求的具体信息
+  - 或客户同意接收定制化的保障方案
+evaluation_dimensions:
+  - 信任重建
+  - 需求唤醒
+  - 专业展示
+  - 异议化解
+  - 推进约见
