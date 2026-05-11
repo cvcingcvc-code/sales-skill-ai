@@ -179,5 +179,5 @@ AI 可以 7×24 小时扮演有具体人设的客户，根据业务员的话术�
 
 ---
 
-*本项目使用 Google Cloud Gemini Enterprise Agent Platform 作为核心 AI 能力，使用 Anthropic Claude Code 作为开发工具。*
+*本项目使用 Google Cloud Gemini Enterprise Agent Platform 作为核心 AI 能力，使用 Anthropic Claude Code 作为开发工具。
 
