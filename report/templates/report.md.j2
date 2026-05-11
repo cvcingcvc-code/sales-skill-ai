@@ -1,0 +1,110 @@
+# 销售话术训练报告
+
+> 生成时间：{{ generated_at }}
+
+---
+
+## 学员信息
+
+| 项目 | 内容 |
+|------|------|
+| 姓名 | {{ learner.name }} |
+| 公司 | {{ learner.company }} |
+| 训练次数 | {{ progress.total_sessions }} |
+
+---
+
+## 本次训练
+
+**场景**：{{ scenario_name }}（难度：{{ difficulty }}）
+
+**销售目标**：{{ sales_objective }}
+
+**对话结果**：{{ result_status }}
+
+### 评分
+
+| 维度 | 得分 | 满分 |
+|------|------|------|
+{% for dim, score in dimensions.items() %}
+| {{ dim }} | {{ score }} | 20 |
+{% endfor %}
+| **总分** | **{{ total_score }}** | **100** |
+
+---
+
+## 能力画像
+
+{% if progress.dimensions %}
+| 维度 | 当前得分 |
+|------|----------|
+{% for dim, score in progress.dimensions.items() %}
+| {{ dim }} | {{ "%.0f" | format(score) }} |
+{% endfor %}
+{% else %}
+暂无历史数据。
+{% endif %}
+
+---
+
+## 亮点
+
+{% for s in strengths %}
+- ✅ {{ s }}
+{% endfor %}
+
+---
+
+## 需改进
+
+{% for w in weaknesses %}
+- ⚠️ {{ w }}
+{% endfor %}
+
+---
+
+## 改进建议
+
+{% for s in suggestions %}
+### {{ loop.index }}. {{ s.issue }}
+
+**更好的处理方式**：{{ s.better_approach }}
+
+**示范话术**：
+> {{ s.example }}
+
+{% endfor %}
+
+---
+
+## 推荐练习
+
+{% if recommended_practice %}
+{% for rid in recommended_practice %}
+- `{{ rid }}`
+{% endfor %}
+{% else %}
+暂无推荐。
+{% endif %}
+
+---
+
+## 薄弱维度
+
+{% if weak_areas %}
+{% for w in weak_areas %}
+- {{ w }}
+{% endfor %}
+{% endif %}
+
+### 推荐场景
+
+{% if recommended_scenarios %}
+{% for s in recommended_scenarios %}
+- {{ s }}
+{% endfor %}
+{% endif %}
+
+---
+
+*本报告由「销售神队友 · 企业话术训练 AI」自动生成*
