@@ -1,0 +1,24 @@
+# Local credentials: use the tracked empty templates instead.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local learner records and generated logs
+/data/db/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.log
