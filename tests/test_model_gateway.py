@@ -1,15 +1,17 @@
 """Mock-only model adapter regression tests; these never establish live readiness."""
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 import json
 import os
+import threading
 import unittest
 from unittest.mock import patch
 
 import httpx
 
 from core.llm_client import LLMClient
-from core.model_gateway import ModelError, ModelGateway, ModelProvider
+from core.model_gateway import DeepSeekProvider, ModelConfig, ModelError, ModelGateway, ModelProvider
 
 
 MESSAGES = [{"role": "user", "content": "推荐适合小团队的商品"}]
@@ -256,6 +258,97 @@ class TestModelGateway(unittest.TestCase):
                 client.chat(MESSAGES)
             self.assertEqual(call.call_count, 1)
             self.assertIsNone(client.last_result)
+
+
+class TestConcurrentModelGateway(unittest.TestCase):
+    """Deterministic thread interleavings, entirely mocked and offline."""
+
+    def setUp(self):
+        environment = patch.dict(os.environ, {
+            "LLM_PROVIDER": "deepseek", "DEEPSEEK_API_KEY": FAKE_KEY,
+            "DEEPSEEK_INPUT_PRICE_PER_MILLION": "2",
+            "DEEPSEEK_OUTPUT_PRICE_PER_MILLION": "5",
+        }, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def test_chat_returns_request_local_text_usage_and_cost_mock(self):
+        publish = threading.Barrier(2)
+
+        class PublishingGateway(ModelGateway):
+            def __setattr__(self, name, value):
+                super().__setattr__(name, value)
+                if name == "last_result" and value is not None:
+                    # Both requests publish before either returns. Reading the
+                    # shared attribute to return a result would mix their data.
+                    publish.wait(timeout=3)
+
+        def respond(request):
+            name = json.loads(request.content)["messages"][-1]["content"]
+            multiplier = 1 if name == "first" else 2
+            data = completion(name)
+            data["usage"] = {"prompt_tokens": 100 * multiplier, "completion_tokens": 20 * multiplier}
+            return httpx.Response(200, json=data)
+
+        gateway = PublishingGateway(transport=httpx.MockTransport(respond))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda name: gateway.chat([{"role": "user", "content": name}]), ["first", "second"]))
+        self.assertEqual([result.text for result in results], ["first", "second"])
+        self.assertEqual([result.prompt_tokens for result in results], [100, 200])
+        self.assertEqual([result.completion_tokens for result in results], [20, 40])
+        self.assertEqual([result.estimated_cost for result in results], [0.0003, 0.0006])
+
+    def test_provider_returns_local_result_after_concurrent_publication_mock(self):
+        publish = threading.Barrier(2)
+
+        class PublishingProvider(DeepSeekProvider):
+            def __setattr__(self, name, value):
+                super().__setattr__(name, value)
+                if name == "last_result" and value is not None:
+                    publish.wait(timeout=3)
+
+        provider = PublishingProvider(ModelConfig.from_env())
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda name: provider._result(name, "offline-model", 10, 5), ["first", "second"]))
+        self.assertEqual([result.text for result in results], ["first", "second"])
+
+    def test_parallel_stream_publishes_each_requests_own_metadata_mock(self):
+        finish = threading.Barrier(2)
+        task = threading.local()
+        observations = []
+
+        class ObservedGateway(ModelGateway):
+            def __setattr__(self, name, value):
+                super().__setattr__(name, value)
+                if name == "last_result" and value is not None:
+                    observations.append((task.name, value))
+
+        class MockStreamProvider(DeepSeekProvider):
+            def stream(self, messages, system="", model=None):
+                name = messages[0]["content"]
+                multiplier = 1 if name == "first" else 2
+                yield name
+                self._result(name, model or self.config.model, 100 * multiplier, 20 * multiplier)
+                # A shared provider would overwrite the first request's usage
+                # before the gateway publishes it. Providers must be per request.
+                finish.wait(timeout=3)
+
+        gateway = ObservedGateway()
+        gateway.provider = MockStreamProvider(gateway.config)
+
+        def read(name):
+            task.name = name
+            return list(gateway.stream([{"role": "user", "content": name}]))
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(list(pool.map(read, ["first", "second"])), [["first"], ["second"]])
+        self.assertEqual(len(observations), 2)
+        for name, result in observations:
+            multiplier = 1 if name == "first" else 2
+            self.assertEqual(result.text, name)
+            self.assertEqual(result.prompt_tokens, 100 * multiplier)
+            self.assertEqual(result.completion_tokens, 20 * multiplier)
+            self.assertEqual(result.estimated_cost, round(0.0003 * multiplier, 10))
 
 
 if __name__ == "__main__":

@@ -118,8 +118,9 @@ class LLMClient:
                 yield from gateway.stream(messages, system, model)
                 self.last_result = gateway.last_result
             return iterator()
-        self.last_result = gateway.chat(messages, system, model)
-        return self.last_result.text
+        result = gateway.chat(messages, system, model)
+        self.last_result = result
+        return result.text
 
     def _has_credentials(self, provider):
         if provider in {"deepseek", "gemini", "claude"}:

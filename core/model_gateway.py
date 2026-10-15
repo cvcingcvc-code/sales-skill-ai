@@ -202,8 +202,9 @@ class ModelProvider(ABC):
                 and self.config.output_price_per_million is not None):
             cost = round((prompt_tokens * self.config.input_price_per_million
                           + completion_tokens * self.config.output_price_per_million) / 1_000_000, 10)
-        self.last_result = ModelResult(text, self.config.provider, model, prompt_tokens, completion_tokens, cost)
-        return self.last_result
+        result = ModelResult(text, self.config.provider, model, prompt_tokens, completion_tokens, cost)
+        self.last_result = result
+        return result
 
     @abstractmethod
     def chat(self, messages, system="", model=None) -> ModelResult:
@@ -439,35 +440,46 @@ class ModelGateway:
         self.last_result = None
         self.last_error = None
 
+    def _request_provider(self):
+        # Adapter completion/stream metadata belongs to one request. The public
+        # provider remains a configuration template, never shared inference state.
+        return type(self.provider)(self.config, transport=self.provider.transport)
+
     def chat(self, messages, system="", model=None) -> ModelResult:
-        self.last_result = None
         try:
-            self.last_result = self.provider.chat(messages, system, model)
+            result = self._request_provider().chat(messages, system, model)
+            self.last_result = result
             self.last_error = None
-            return self.last_result
+            return result
         except Exception as error:
-            self.last_error = _safe_exception(error)
-            raise self.last_error from None
+            failure = _safe_exception(error)
+            self.last_result = None
+            self.last_error = failure
+            raise failure from None
 
     def stream(self, messages, system="", model=None):
-        self.last_result = None
-        self.provider.last_result = None
+        provider = self._request_provider()
         try:
-            yield from self.provider.stream(messages, system, model)
-            if self.provider.last_result is None:
+            yield from provider.stream(messages, system, model)
+            result = provider.last_result
+            if result is None:
                 raise ModelError("invalid_response", blocked=False)
-            self.last_result = self.provider.last_result
+            self.last_result = result
             self.last_error = None
         except Exception as error:
-            self.last_error = _safe_exception(error)
-            raise self.last_error from None
+            failure = _safe_exception(error)
+            self.last_result = None
+            self.last_error = failure
+            raise failure from None
 
     def status(self):
         result = self.provider.status()
-        if self.last_error:
-            result.update(status="BLOCKED" if self.last_error.blocked else "ERROR", available=False,
-                          code=self.last_error.code, message=self.last_error.public_message)
-        elif self.last_result:
+        # Snapshot diagnostic state; it is not the result of the calling request.
+        error, last_result = self.last_error, self.last_result
+        if error:
+            result.update(status="BLOCKED" if error.blocked else "ERROR", available=False,
+                          code=error.code, message=error.public_message)
+        elif last_result:
             result.update(status="AVAILABLE", available=True, code=None,
                           message="最近一次真实模型请求成功；这不保证后续请求一定成功。")
         return result
