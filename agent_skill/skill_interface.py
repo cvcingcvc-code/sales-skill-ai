@@ -7,16 +7,17 @@
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class SkillInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     action: str = Field(..., description="操作类型: evaluate | roleplay | recommend")
-    learner_id: Optional[str] = Field(None, description="学员 ID")
-    sales_text: Optional[str] = Field(None, description="evaluate 时必填：要评估的话术文本")
-    scenario_id: Optional[str] = Field(None, description="roleplay 或 evaluate 时必填")
-    customer_message: Optional[str] = Field(None, description="roleplay 时：客户当前消息")
-    session_id: Optional[str] = Field(None, description="roleplay 时：会话 ID（用于继续对话）")
+    learner_id: Optional[str] = Field(None, min_length=1, max_length=100, description="学员 ID")
+    sales_text: Optional[str] = Field(None, max_length=10000, description="evaluate 时必填：要评估的话术文本")
+    scenario_id: Optional[str] = Field(None, max_length=100, description="roleplay 或 evaluate 时必填")
+    customer_message: Optional[str] = Field(None, max_length=2000, description="roleplay 时：客户当前消息")
+    session_id: Optional[str] = Field(None, max_length=100, description="roleplay 时：会话 ID（用于继续对话）")
 
 
 class RoleplayResult(BaseModel):

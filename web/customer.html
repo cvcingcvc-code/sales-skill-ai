@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>商品咨询与人工客服</title>
+  <style>
+    body {font:16px/1.6 system-ui,sans-serif;max-width:820px;margin:2rem auto;padding:0 1rem;color:#17212b;background:#f7f8fa}
+    section,article {background:white;border:1px solid #dde2e7;border-radius:8px;padding:1rem;margin:1rem 0}
+    label {display:block;margin:.6rem 0} input,textarea,button {font:inherit;padding:.5rem;max-width:100%;box-sizing:border-box}
+    textarea {width:100%} button {cursor:pointer} #messages {white-space:pre-wrap} .status {font-weight:600} [hidden] {display:none!important}
+  </style>
+  <script src="/static/customer.js" defer></script>
+</head>
+<body>
+  <h1>商品咨询与人工客服</h1>
+  <p>可查询已上架商品与售后资料。客服不能执行付款、退款、改价或作出特殊优惠承诺。</p>
+  <section id="welcome">
+    <p>开始咨询后，我们会保存本次对话和必要的需求摘要，供客服答复及人工接管使用。请勿发送密码、密钥、证件或银行卡号码。联系方式仅在您另行明确同意后保存为线索。</p>
+    <label><input id="notice" type="checkbox"> 我已了解本次对话的保存与使用方式</label>
+    <button id="start" type="button">开始咨询</button>
+  </section>
+  <p id="status" class="status" role="status"></p>
+  <button id="new-session" type="button">开始新会话</button>
+  <main id="workspace" hidden>
+    <section>
+      <h2>对话记录</h2><div id="messages" aria-live="polite"></div>
+      <form id="chat-form">
+        <label for="message">商品、需求或售后问题（请勿填写联系方式）</label>
+        <textarea id="message" maxlength="2000" required rows="3"></textarea>
+        <button type="submit">发送</button>
+        <button type="button" id="handoff">申请人工接管</button>
+        <button type="button" id="refresh">查看人工回复</button>
+      </form>
+    </section>
+    <section>
+      <h2>可选：留下联系线索</h2>
+      <p>此表单用于人工后续联系。不同意也可继续咨询；仅填写必要信息。</p>
+      <form id="lead-form">
+        <label>姓名（可选） <input id="lead-name" maxlength="100"></label>
+        <label>电话或邮箱 <input id="contact" maxlength="200" required></label>
+        <label>需要联系处理的事项 <textarea id="need" maxlength="1000"></textarea></label>
+        <label><input id="consent" type="checkbox" required> 我同意保存以上联系方式与需求，供人工客服联系使用</label>
+        <button type="submit">提交联系线索</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>
