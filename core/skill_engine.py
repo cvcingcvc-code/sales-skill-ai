@@ -12,7 +12,7 @@
 from typing import Optional
 from core.llm_client import LLMClient
 from core.roleplay import RoleplaySession
-from core.scorer import Scorer, ScoreResult
+from core.scorer import Scorer, ScoreResult, ScoringError
 from core import memory
 from scenarios.scenario_loader import load_scenario, list_scenarios
 
@@ -45,6 +45,8 @@ class SkillEngine:
         import json
         from pathlib import Path
 
+        if category not in {"objections", "product_pitch", "closing"}:
+            return []
         scripts_dir = Path(__file__).parent.parent / "data" / "scripts"
         filepath = scripts_dir / f"{category}.json"
         if not filepath.exists():
@@ -135,7 +137,10 @@ class SkillEngine:
 
         result = self.scorer.score_session(transcript, scenario)
 
-        # 保存到数据库
+        if result.score_status != "valid" or result.score_source not in {"model", "rule"}:
+            raise ScoringError()
+
+        # 只有有效评分才能写入会话及能力画像。
         memory.save_session(
             learner_id=self._current_learner_id or "anonymous",
             scenario_id=scenario.get("id", "unknown"),
@@ -145,6 +150,11 @@ class SkillEngine:
                 "strengths": result.strengths,
                 "weaknesses": result.weaknesses,
                 "suggestions": result.suggestions,
+                "recommended_practice": result.recommended_practice,
+                "score_source": result.score_source,
+                "score_status": result.score_status,
+                "error": result.error,
+                "calibration": result.calibration,
             },
             transcript=transcript,
         )

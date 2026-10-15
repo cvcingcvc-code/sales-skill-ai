@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from core.skill_engine import SkillEngine
+from core.llm_client import LLMError
+from core.scorer import ScoringError
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -181,13 +183,22 @@ def battle_mode(engine: SkillEngine, learner_id: str):
         try:
             result = engine.force_end_session()
             show_score(result)
-        except Exception:
-            pass
+        except (LLMError, ScoringError) as error:
+            show_model_error(error)
 
 
 def show_score(result):
     """展示评分结果。"""
     console.print()
+    source = {"model": "模型评分", "rule": "规则评分", "legacy_invalid": "无效评分"}.get(result.score_source, "未知来源")
+    console.print(f"评分来源: {source} | 状态: {result.score_status}")
+    if result.score_status != "valid":
+        console.print("评分无效，未作为真实模型评分保存。", style="red")
+        return
+    if result.calibration:
+        calibration = result.calibration
+        console.print(f"难度校准: 模型原分 {calibration['model_total_score']} × {calibration['multiplier']} ({calibration['difficulty']})")
+        console.print(calibration["rule"], style="dim")
     table = Table(title="📊 话术评分报告", box=box.ROUNDED)
     table.add_column("维度", style="cyan")
     table.add_column("得分", style="yellow")
@@ -306,6 +317,13 @@ def select_learner(engine: SkillEngine):
 # 主入口
 # ---------------------------------------------------------------------------
 
+def show_model_error(error):
+    """只显示统一的公开错误，不显示可能包含凭据的底层异常。"""
+    status = "BLOCKED" if getattr(error, "blocked", False) else "ERROR"
+    message = error.public_message if isinstance(error, ScoringError) else "模型调用失败，请检查模型配置、凭据和网络后重试。"
+    console.print(f"{status}: {message}", style="red", markup=False)
+
+
 def main():
     engine = SkillEngine()
     show_banner()
@@ -316,14 +334,17 @@ def main():
         if choice == "q":
             console.print("\n[dim]再见！祝销售顺利！[/dim]\n")
             break
-        elif choice == "1":
-            new_employee_mode(engine, _current_learner_id)
-        elif choice == "2":
-            battle_mode(engine, _current_learner_id)
-        elif choice == "3":
-            progress_report(engine, _current_learner_id)
-        elif choice == "4":
-            select_learner(engine)
+        try:
+            if choice == "1":
+                new_employee_mode(engine, _current_learner_id)
+            elif choice == "2":
+                battle_mode(engine, _current_learner_id)
+            elif choice == "3":
+                progress_report(engine, _current_learner_id)
+            elif choice == "4":
+                select_learner(engine)
+        except (LLMError, ScoringError) as error:
+            show_model_error(error)
 
 
 if __name__ == "__main__":

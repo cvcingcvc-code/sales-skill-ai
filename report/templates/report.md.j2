@@ -24,12 +24,25 @@
 
 ### 评分
 
+**评分来源**：{{ {"model": "模型评分", "rule": "规则评分", "legacy_invalid": "历史或无效评分（未验证）"}.get(score_source, "未知") }}
+
+**评分状态**：{{ score_status }}
+{% if score_error %}
+**说明**：{{ score_error }}
+{% endif %}
+{% if calibration %}
+**难度校准**：模型原分 {{ calibration.model_total_score }} × {{ calibration.multiplier }}（{{ calibration.difficulty }}）；{{ calibration.rule }}
+{% endif %}
+{% if score_status == "valid" %}
 | 维度 | 得分 | 满分 |
 |------|------|------|
 {% for dim, score in dimensions.items() %}
 | {{ dim }} | {{ score }} | 20 |
 {% endfor %}
 | **总分** | **{{ total_score }}** | **100** |
+{% else %}
+无有效评分。历史记录需重新调用模型评估。
+{% endif %}
 
 ---
 
