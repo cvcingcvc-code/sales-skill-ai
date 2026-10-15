@@ -21,13 +21,9 @@ def _load_all() -> list[dict]:
 def load_scenario(scenario_id: str) -> Optional[dict]:
     """根据 scenario_id（YAML 内部 id 字段）加载单个场景。"""
     for s in _load_all():
-        if s.get("id") == scenario_id:
+        # 只允许枚举到的场景 ID 或文件 stem；不将用户输入拼接成文件路径。
+        if s.get("id") == scenario_id or s.get("_filename") == scenario_id:
             return s
-    # fallback: 按文件名匹配
-    filepath = _TEMPLATES_DIR / f"{scenario_id}.yaml"
-    if filepath.exists():
-        with open(filepath, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
     return None
 
 
