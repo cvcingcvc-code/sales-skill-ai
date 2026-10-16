@@ -67,6 +67,7 @@ def generate_report(
         "result_status": result_status,
         "score_source": score_data.get("score_source", "legacy_invalid"),
         "score_status": score_data.get("score_status", "invalid"),
+        "score_scale": memory.score_scale_info(score_data),
         "score_error": score_data.get("error") or ("历史评分未记录来源，不能作为已验证模型评分。" if score_data and not score_data.get("score_status") else ""),
         "calibration": score_data.get("calibration", {}),
         "total_score": score_data.get("total_score", "N/A"),

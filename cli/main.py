@@ -199,13 +199,15 @@ def show_score(result):
         calibration = result.calibration
         console.print(f"难度校准: 模型原分 {calibration['model_total_score']} × {calibration['multiplier']} ({calibration['difficulty']})")
         console.print(calibration["rule"], style="dim")
+    console.print("维度原始分 0–20；能力画像换算为 0–100（×5）；总分独立校准。", style="dim")
     table = Table(title="📊 话术评分报告", box=box.ROUNDED)
     table.add_column("维度", style="cyan")
     table.add_column("得分", style="yellow")
     table.add_column("满分", style="dim")
 
     for dim, score in result.dimensions.items():
-        bar = "█" * (score // 5) + "░" * (20 - score // 5)
+        filled = max(0, min(20, round(score)))
+        bar = "█" * filled + "░" * (20 - filled)
         table.add_row(f"{dim}\n[dim]{bar}[/dim]", str(score), "20")
 
     console.print(table)
@@ -250,10 +252,18 @@ def progress_report(engine: SkillEngine, learner_id: str):
 
     dims = progress.get("dimensions", {})
     if dims:
-        console.print("\n[bold]能力维度:[/bold]")
+        console.print("\n[bold]能力维度（有明确量纲的记录转换为 0–100 分）:[/bold]")
         for dim, score in sorted(dims.items()):
-            bar = "█" * (int(score) // 5) + "░" * (20 - int(score) // 5)
-            console.print(f"  {dim:12s} {bar} {score:.0f}")
+            info = progress.get("provenance", {}).get(dim, {})
+            source = info.get("score_source", "legacy_unverified")
+            if info.get("scale_status") != "explicit":
+                console.print(f"  {dim}: 原始分 {score:g}，量纲未验证（{info.get('scale_status', 'legacy_unverified')}），来源 {source}", markup=False)
+                continue
+            filled = max(0, min(20, int(score) // 5))
+            bar = "█" * filled + "░" * (20 - filled)
+            raw = progress["raw_dimensions"][dim]
+            maximum = info["dimension_max"]
+            console.print(f"  {dim:12s} {bar} {score:.0f}/100（原始 {raw:g}/{maximum:g}；{source}）", markup=False)
 
     recent = progress.get("recent_scores", [])
     if recent:

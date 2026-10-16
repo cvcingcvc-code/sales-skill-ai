@@ -27,6 +27,8 @@
 **评分来源**：{{ {"model": "模型评分", "rule": "规则评分", "legacy_invalid": "历史或无效评分（未验证）"}.get(score_source, "未知") }}
 
 **评分状态**：{{ score_status }}
+
+**维度量纲**：{% if score_scale.scale_status == "explicit" %}原始分 0–{{ score_scale.dimension_max }}；能力画像换算为 0–100 分；总分独立校准。{% else %}{{ score_scale.scale_status }}：量纲未验证，保留原始值，不自动乘五。{% endif %}
 {% if score_error %}
 **说明**：{{ score_error }}
 {% endif %}
@@ -37,7 +39,7 @@
 | 维度 | 得分 | 满分 |
 |------|------|------|
 {% for dim, score in dimensions.items() %}
-| {{ dim }} | {{ score }} | 20 |
+| {{ dim }} | {{ score }} | {{ score_scale.dimension_max if score_scale.scale_status == "explicit" else "未验证" }} |
 {% endfor %}
 | **总分** | **{{ total_score }}** | **100** |
 {% else %}
@@ -49,10 +51,12 @@
 ## 能力画像
 
 {% if progress.dimensions %}
-| 维度 | 当前得分 |
-|------|----------|
+百分制薄弱阈值为 70 分；历史 0–20 分且量纲不明的记录不自动放大、不绘入雷达、不据此推荐弱项。
+
+| 维度 | 原始分 | 百分制 | 量纲状态 | 评分来源 |
+|------|--------|--------|----------|----------|
 {% for dim, score in progress.dimensions.items() %}
-| {{ dim }} | {{ "%.0f" | format(score) }} |
+| {{ dim }} | {{ "%g" | format(progress.raw_dimensions[dim]) }}{% if progress.provenance[dim].dimension_max %}/{{ progress.provenance[dim].dimension_max }}{% endif %} | {{ "%.0f / 100" | format(score) if dim in progress.normalized_dimensions else "未验证" }} | {{ progress.provenance[dim].scale_status }} | {{ progress.provenance[dim].score_source }} |
 {% endfor %}
 {% else %}
 暂无历史数据。
