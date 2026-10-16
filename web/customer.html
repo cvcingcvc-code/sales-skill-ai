@@ -44,6 +44,15 @@
         <button type="submit">提交联系线索</button>
       </form>
     </section>
+    <section aria-labelledby="privacy-title">
+      <h2 id="privacy-title">本次会话与隐私</h2>
+      <p>关闭会话后仍可查看记录、撤回联系线索或删除本次会话。永久删除会移除消息、需求、线索和关联记录；仅保留不含正文的操作审计元数据。</p>
+      <button id="close-session" type="button">关闭本次会话</button>
+      <label><input id="withdraw-confirm" type="checkbox"> 我确认撤回本次会话的联系线索与联系同意</label>
+      <button id="withdraw-lead" type="button" disabled>撤回联系线索</button>
+      <label><input id="delete-confirm" type="checkbox"> 我确认永久删除本次会话及关联数据，且无法恢复</label>
+      <button id="delete-session" type="button" disabled>永久删除本次会话</button>
+    </section>
   </main>
 </body>
 </html>

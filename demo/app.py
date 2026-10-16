@@ -53,6 +53,7 @@ def show_score(result):
     status = getattr(result, "score_status", "unknown")
     source_name = {"model": "模型评分", "rule": "规则评分", "rules": "规则评分"}.get(source, "未标注来源")
     st.caption(f"评分来源：{source_name} · 状态：{status}")
+    st.caption("维度原始分为 0–20 分；能力雷达按原始分 × 5 换算为 0–100 分。总分单独进行难度校准。")
     if source in {"rule", "rules"}:
         st.warning("当前为规则评分；规则结果不能作为真实模型评分验收通过的依据。")
     if status in {"blocked", "BLOCKED", "error", "failed"}:
@@ -136,7 +137,7 @@ with st.sidebar:
     progress = report.get("progress", {})
     st.metric("训练次数", progress.get("total_sessions", 0))
 
-    dims = progress.get("dimensions", {})
+    dims = progress.get("normalized_dimensions", {})
     if dims:
         st.subheader("能力雷达")
         import pandas as pd
@@ -149,6 +150,15 @@ with st.sidebar:
         fig = px.line_polar(df, r="得分", theta="维度", line_close=True, range_r=[0, 100])
         fig.update_traces(fill="toself")
         st.plotly_chart(fig, use_container_width=True)
+        st.caption("量纲：0–100 分；只展示有明确原始量纲的维度。薄弱阈值为 70 分。")
+    unverified = {
+        dim: progress.get("raw_dimensions", {}).get(dim)
+        for dim, info in progress.get("provenance", {}).items()
+        if info.get("scale_status") != "explicit"
+    }
+    if unverified:
+        st.info("历史或异常记录的量纲未验证（legacy_unverified / invalid_scale），保留原值且不绘入雷达；历史 0–20 分不自动放大，也不据此推荐弱项。")
+        st.write("未验证维度原始分：", unverified)
 
     st.divider()
     st.caption("Powered by DeepSeek")
@@ -303,6 +313,7 @@ with tab3:
                 "总分": sj.get("total_score", 0),
                 "评分来源": sj.get("score_source", "未标注（历史记录）"),
                 "评分状态": sj.get("score_status", "未标注（历史记录）"),
+                "维度满分": memory.score_scale_info(sj)["dimension_max"] or "量纲未验证",
             })
         df = pd.DataFrame(records)
         st.line_chart(df.set_index("日期")["总分"])
