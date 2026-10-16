@@ -16,6 +16,7 @@ import httpx
 
 
 _ERROR_MESSAGES = {
+    "disabled": "BLOCKED：模型调用已暂停；配置本地模型并显式启用后才能执行真实调用。",
     "missing_key": "BLOCKED：模型 API Key 未配置，请在环境设置中安全配置。",
     "configuration": "BLOCKED：模型配置无效或模型名称未配置。",
     "authentication": "BLOCKED：模型服务鉴权失败，请检查配置的凭据。",
@@ -58,6 +59,11 @@ class ModelConfig:
     input_price_per_million: Optional[float] = None
     output_price_per_million: Optional[float] = None
     valid: bool = True
+    # Absence preserves the existing training integration. New deployments use
+    # MODEL_ENABLED=false in .env.example until a local model is configured.
+    enabled: bool = True
+    max_input_tokens: int = 16000
+    max_output_tokens: int = 4096
 
     @classmethod
     def from_env(cls, provider: Optional[str] = None):
@@ -72,6 +78,23 @@ class ModelConfig:
         }
         default_model, default_url, key_env = defaults.get(name, ("", "", ""))
         valid = True
+        enabled_value = os.getenv("MODEL_ENABLED", "true").strip().lower()
+        enabled = enabled_value == "true"
+        if enabled_value not in {"true", "false"}:
+            valid = False
+        limits = []
+        for variable, default in (("MODEL_MAX_INPUT_TOKENS", 16000), ("MODEL_MAX_OUTPUT_TOKENS", 4096)):
+            raw = os.getenv(variable, str(default)).strip()
+            try:
+                if not raw.isdecimal():
+                    raise ValueError
+                value = int(raw)
+                if value <= 0:
+                    raise ValueError
+                limits.append(value)
+            except ValueError:
+                limits.append(default)
+                valid = False
         try:
             timeout = float(os.getenv("MODEL_TIMEOUT_SECONDS", "30"))
             if not math.isfinite(timeout) or timeout <= 0 or timeout > 600:
@@ -98,9 +121,16 @@ class ModelConfig:
             input_price_per_million=prices[0],
             output_price_per_million=prices[1],
             valid=valid,
+            enabled=enabled,
+            max_input_tokens=limits[0],
+            max_output_tokens=limits[1],
         )
 
     def configuration_error(self):
+        if (not self.valid or not isinstance(self.enabled, bool)
+                or any(not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0
+                       for limit in (self.max_input_tokens, self.max_output_tokens))):
+            return ModelError("configuration")
         if self.provider not in {"deepseek", "ollama", "gemini", "claude"}:
             return ModelError("unknown_provider")
         if self.provider != "ollama" and not self.api_key:
@@ -164,9 +194,26 @@ class ModelProvider(ABC):
         self.last_result = None
 
     def _check(self):
+        # Check invalid configuration before the switch so a typo can never
+        # silently enable inference, and disabling needs no credentials/model.
+        if not self.config.valid or not isinstance(self.config.enabled, bool):
+            raise ModelError("configuration")
+        if not self.config.enabled:
+            raise ModelError("disabled")
         error = self.config.configuration_error()
         if error:
             raise error
+
+    def _messages(self, messages, system):
+        output = _messages(messages, system)
+        # UTF-8 byte count is a conservative token upper bound for the supported
+        # byte-based model tokenizers. Framing allowance includes roles and chat
+        # template markers; no external tokenizer or model download is needed.
+        estimate = sum(len(message["content"].encode("utf-8"))
+                       + len(message["role"].encode("utf-8")) + 32 for message in output)
+        if estimate > self.config.max_input_tokens:
+            raise ModelError("invalid_request", blocked=False)
+        return output
 
     def status(self):
         error = self.config.configuration_error()
@@ -178,15 +225,22 @@ class ModelProvider(ABC):
                 url = None
         except ValueError:
             url = None
+        disabled = self.config.enabled is False and self.config.valid
         return {
             "provider": self.config.provider,
             "model": self.config.model or None,
             "base_url": url,
             "configured": error is None,
-            "available": None,
-            "status": "BLOCKED" if error else "UNVERIFIED",
-            "code": error.code if error else None,
-            "message": error.public_message if error else "配置已读取，尚未完成真实模型连通性验证。",
+            "available": False if disabled or error else None,
+            "status": "DISABLED" if disabled else "BLOCKED" if error else "UNVERIFIED",
+            "code": "disabled" if disabled else error.code if error else None,
+            "message": _ERROR_MESSAGES["disabled"] if disabled else error.public_message if error else "配置已读取，尚未完成真实模型连通性验证。",
+            "enabled": self.config.enabled,
+            "configuration_code": error.code if error else None,
+            "configured_note": "configured 仅表示静态配置完整；enabled 是独立调用开关，available 只由真实调用验证。",
+            "max_input_tokens": self.config.max_input_tokens,
+            "max_output_tokens": self.config.max_output_tokens,
+            "input_token_estimate": "utf8_bytes_upper_bound",
             "credentials_present": bool(self.config.api_key) if self.config.provider != "ollama" else None,
             "cost_configured": self.config.input_price_per_million is not None and self.config.output_price_per_million is not None,
         }
@@ -220,8 +274,8 @@ class DeepSeekProvider(ModelProvider):
 
     def _payload(self, messages, system, model, stream=False):
         self._check()
-        return {"model": model or self.config.model, "messages": _messages(messages, system),
-                "stream": stream, "max_tokens": 4096}
+        return {"model": model or self.config.model, "messages": self._messages(messages, system),
+                "stream": stream, "max_tokens": self.config.max_output_tokens}
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"}
@@ -254,6 +308,7 @@ class DeepSeekProvider(ModelProvider):
 
     def _stream_payload(self, payload, headers):
         """Raw SSE parser, also used by the legacy parser compatibility hook."""
+        self._check()
         parts, usage, complete = [], {}, False
         try:
             with self._client() as client:
@@ -302,12 +357,19 @@ class OllamaProvider(ModelProvider):
 
     def _payload(self, messages, system, model, stream=False):
         self._check()
-        return {"model": model or self.config.model, "messages": _messages(messages, system), "stream": stream}
+        return {"model": model or self.config.model, "messages": self._messages(messages, system),
+                "stream": stream, "options": {"num_predict": self.config.max_output_tokens}}
+
+    def _client(self):
+        # Only loopback bypasses inherited proxy routing; remote/VPN addresses
+        # keep normal environment routing. TLS verification stays enabled.
+        loopback = urlsplit(self.config.base_url).hostname in {"localhost", "127.0.0.1", "::1"}
+        return httpx.Client(timeout=self.config.timeout, transport=self.transport, trust_env=not loopback)
 
     def chat(self, messages, system="", model=None):
         payload = self._payload(messages, system, model)
         try:
-            with httpx.Client(timeout=self.config.timeout, transport=self.transport) as client:
+            with self._client() as client:
                 response = client.post(f"{self.config.base_url}/api/chat", json=payload)
                 response.raise_for_status()
                 try:
@@ -324,7 +386,7 @@ class OllamaProvider(ModelProvider):
         payload = self._payload(messages, system, model, stream=True)
         parts, complete = [], False
         try:
-            with httpx.Client(timeout=self.config.timeout, transport=self.transport) as client:
+            with self._client() as client:
                 with client.stream("POST", f"{self.config.base_url}/api/chat", json=payload) as response:
                     response.raise_for_status()
                     for line in response.iter_lines():
@@ -361,12 +423,14 @@ class GeminiProvider(ModelProvider):
 
     def _send(self, messages, system, model, stream):
         self._check()
-        _messages(messages, system)
+        self._messages(messages, system)
         import google.generativeai as genai
         genai.configure(api_key=self.config.api_key)
         instance = genai.GenerativeModel(model_name=model or self.config.model, system_instruction=system or None)
         chat = instance.start_chat(history=self.history(messages[:-1]))
-        return chat.send_message(messages[-1]["content"], stream=stream, request_options={"timeout": self.config.timeout})
+        return chat.send_message(messages[-1]["content"], stream=stream,
+                                 generation_config={"max_output_tokens": self.config.max_output_tokens},
+                                 request_options={"timeout": self.config.timeout})
 
     def chat(self, messages, system="", model=None):
         try:
@@ -397,10 +461,11 @@ class ClaudeProvider(ModelProvider):
         return anthropic.Anthropic(api_key=self.config.api_key, timeout=self.config.timeout)
 
     def chat(self, messages, system="", model=None):
-        _messages(messages, system)
+        self._check()
+        self._messages(messages, system)
         try:
             with self._client() as client:
-                kwargs = {"model": model or self.config.model, "max_tokens": 4096, "messages": messages}
+                kwargs = {"model": model or self.config.model, "max_tokens": self.config.max_output_tokens, "messages": messages}
                 if system:
                     kwargs["system"] = system
                 response = client.messages.create(**kwargs)
@@ -411,11 +476,12 @@ class ClaudeProvider(ModelProvider):
             raise _safe_exception(error) from None
 
     def stream(self, messages, system="", model=None):
-        _messages(messages, system)
+        self._check()
+        self._messages(messages, system)
         parts = []
         try:
             with self._client() as client:
-                kwargs = {"model": model or self.config.model, "max_tokens": 4096, "messages": messages}
+                kwargs = {"model": model or self.config.model, "max_tokens": self.config.max_output_tokens, "messages": messages}
                 if system:
                     kwargs["system"] = system
                 with client.messages.stream(**kwargs) as response:
@@ -447,6 +513,7 @@ class ModelGateway:
 
     def chat(self, messages, system="", model=None) -> ModelResult:
         try:
+            self.provider._check()
             result = self._request_provider().chat(messages, system, model)
             self.last_result = result
             self.last_error = None
@@ -458,8 +525,9 @@ class ModelGateway:
             raise failure from None
 
     def stream(self, messages, system="", model=None):
-        provider = self._request_provider()
         try:
+            self.provider._check()
+            provider = self._request_provider()
             yield from provider.stream(messages, system, model)
             result = provider.last_result
             if result is None:
@@ -476,6 +544,8 @@ class ModelGateway:
         result = self.provider.status()
         # Snapshot diagnostic state; it is not the result of the calling request.
         error, last_result = self.last_error, self.last_result
+        if result["status"] == "DISABLED":
+            return result
         if error:
             result.update(status="BLOCKED" if error.blocked else "ERROR", available=False,
                           code=error.code, message=error.public_message)

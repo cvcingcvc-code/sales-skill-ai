@@ -3,6 +3,10 @@
 
 Run in a fresh process after securely configuring credentials:
     python scripts/verify_live.py --provider deepseek --output /tmp/live-acceptance.json
+Local model, after explicit activation (no API key required):
+    python scripts/verify_live.py --provider ollama --output /tmp/local-acceptance.json
+
+MODEL_ENABLED=false reports BLOCKED without contacting any model service.
 
 Exit codes: 0 PASS, 1 FAIL, 2 BLOCKED (configuration/network/authentication).
 Only synthetic catalog/customer data is used. The temporary SQLite file is deleted.
@@ -27,11 +31,11 @@ from customer_service.store import Store
 
 BLOCKED_CODES = {
     "missing_key", "configuration", "authentication", "timeout", "unavailable",
-    "rate_limited", "unknown_provider",
+    "rate_limited", "unknown_provider", "disabled",
 }
 
 
-def verify(provider="deepseek"):
+def verify(provider=None):
     """Make one genuine request only when the selected provider is configured."""
     report = {
         "status": "BLOCKED",
@@ -46,7 +50,9 @@ def verify(provider="deepseek"):
     }
     gateway = ModelGateway(provider=provider)
     state = gateway.status()
-    if not state.get("configured"):
+    provider = gateway.config.provider
+    report["provider"] = provider
+    if state.get("status") == "DISABLED" or not state.get("configured"):
         report["checks"]["provider_configuration"] = "BLOCKED"
         report["checks"]["real_model_request"] = "BLOCKED"
         report["reason"] = state.get("code") if state.get("code") in BLOCKED_CODES else "configuration"
@@ -125,7 +131,8 @@ def verify(provider="deepseek"):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=("deepseek", "ollama"), default="deepseek")
+    parser.add_argument("--provider", choices=("deepseek", "ollama"), default=None,
+                        help="Defaults to LLM_PROVIDER; never switches to another provider after failure.")
     parser.add_argument("--output", type=Path, help="Write the same sanitized JSON report to this file.")
     args = parser.parse_args(argv)
     load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)

@@ -55,6 +55,10 @@ class LLMClient:
     def chat(self, messages: list[dict], system: str = "", stream: bool = False, model: Optional[str] = None):
         self.last_result = None
         self.last_error = None
+        config = ModelConfig.from_env(self.provider)
+        if not config.valid or not config.enabled:
+            self.last_error = ModelError("configuration" if not config.valid else "disabled")
+            raise self.last_error
         # ModelError from real adapters is deliberately never silently routed to
         # another cloud. The fallback hook only preserves old extension behavior
         # for legacy implementations that raise untyped exceptions.
