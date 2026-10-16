@@ -155,6 +155,7 @@ class SkillEngine:
                 "score_status": result.score_status,
                 "error": result.error,
                 "calibration": result.calibration,
+                "scale": {"dimension_max": 20, "total_max": 100},
             },
             transcript=transcript,
         )
