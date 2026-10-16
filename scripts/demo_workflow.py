@@ -76,16 +76,30 @@ def run(mock=False):
                 assert any(m["role"] == "human" for m in history["messages"])
                 assert history["need_summary"]
                 assert len(client.get("/admin/leads", headers=admin).json()) == 1
+                resumed = client.post(f"/admin/conversations/{cid}/resume", headers=admin)
+                assert resumed.status_code == 200 and resumed.json()["status"] == "ai"
+                withdrawn = client.request("DELETE", f"/support/conversations/{cid}/leads", headers=visitor,
+                                           json={"confirm": True})
+                assert withdrawn.status_code == 200 and withdrawn.json()["consent_withdrawn"]
+                assert not store.list_leads()
+                closed = client.post(f"/support/conversations/{cid}/close", headers=visitor)
+                assert closed.status_code == 200 and closed.json()["status"] == "closed"
+                deleted = client.request("DELETE", f"/support/conversations/{cid}", headers=visitor,
+                                         json={"confirm": True})
+                assert deleted.status_code == 200 and deleted.json()["deleted"]
+                assert client.get(f"/support/conversations/{cid}", headers=visitor).status_code == 403
                 status = answer["model_status"]
                 report = {
-                    "status": "MOCK_DEMO_COMPLETE" if mock else ("BLOCKED" if status == "BLOCKED" else "COMPLETE"),
+                    "status": "MOCK_DEMO_COMPLETE" if mock else (status if status in {"BLOCKED", "DISABLED"} else "COMPLETE"),
                     "synthetic_data_only": True, "model_status": status,
                     "checks": {"catalog": "PASS", "conversation_record": "PASS", "need_record": "PASS",
-                               "explicit_consent_lead": "PASS", "human_handoff_and_reply": "PASS"},
+                               "explicit_consent_lead": "PASS", "human_handoff_and_reply": "PASS",
+                               "explicit_ai_resume": "PASS", "consent_withdrawal": "PASS",
+                               "close_and_delete": "PASS"},
                     "customer_reply": answer["reply"],
                     "note": "Mock 演示不是真实模型验收。" if mock else "模型缺失或失败不会伪造成功；独立人工链路仍可验证。",
                 }
-                return report, 2 if status == "BLOCKED" else 0
+                return report, 2 if status in {"BLOCKED", "DISABLED"} else 0
     finally:
         if previous is None:
             os.environ.pop("ADMIN_API_TOKEN", None)
