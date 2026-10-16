@@ -32,7 +32,7 @@ def _score_payload(score):
 
 
 def create_app(store=None, gateway=None):
-    app = FastAPI(title="AI Sales Agent V1", version="1.0.0")
+    app = FastAPI(title="AI Sales Agent", version="2.0.0")
     store = store if store is not None else Store()
     gateway = gateway if gateway is not None else ModelGateway()
     service = CustomerService(store=store, gateway=gateway)
@@ -46,7 +46,7 @@ def create_app(store=None, gateway=None):
     async def support_error(_request: Request, error: SupportError):
         return JSONResponse(status_code=error.status_code, content={
             "detail": {"code": error.code, "message": error.public_message},
-        })
+        }, headers={"Retry-After": str(error.retry_after)} if hasattr(error, "retry_after") else None)
 
     @app.exception_handler(ModelError)
     async def model_error(_request: Request, error: ModelError):
@@ -69,7 +69,7 @@ def create_app(store=None, gateway=None):
 
     @app.get("/skill/health")
     def health():
-        return {"status": "ok", "service": "sales-skill-ai", "version": "1.0.0"}
+        return {"status": "ok", "service": "sales-skill-ai", "version": "2.0.0"}
 
     @app.get("/skill/scenarios")
     def scenarios(difficulty: str | None = None):

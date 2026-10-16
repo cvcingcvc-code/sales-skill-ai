@@ -1,12 +1,15 @@
 """Website text support. Administration and visitor capabilities stay separate."""
 
+import os
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent_skill.auth import require_admin
+from customer_service.controls import RateLimiter
+from customer_service.store import SupportError
 
 
 class InputModel(BaseModel):
@@ -60,16 +63,45 @@ class ResolveInput(InputModel):
     reply: str = Field(min_length=1, max_length=4000)
 
 
+class ConfirmationInput(InputModel):
+    confirm: bool = Field(strict=True)
+
+    @field_validator("confirm")
+    @classmethod
+    def confirmed(cls, value):
+        if value is not True:
+            raise ValueError("操作必须明确确认")
+        return value
+
+
+class RetentionInput(InputModel):
+    days: int = Field(ge=1, le=36500, strict=True)
+
+
+class PurgeInput(RetentionInput, ConfirmationInput):
+    pass
+
+
+def limit_setting(name, default, *, minimum=0, maximum=1000000):
+    raw = os.getenv(name, str(default)).strip()
+    if not raw.isascii() or not raw.isdecimal() or not minimum <= int(raw) <= maximum:
+        raise SupportError("configuration", "资源限制配置无效，请联系管理员。", 503)
+    return int(raw)
+
+
 def build_router(service, store, gateway) -> APIRouter:
     router = APIRouter()
     admin = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
+    limiter = RateLimiter(store)
 
     @router.get("/support/products")
     def catalog():
         return store.list_products(active_only=True)
 
     @router.post("/support/conversations", status_code=201)
-    def create_conversation():
+    def create_conversation(request: Request):
+        limiter.check("create_conversation", request.client.host if request.client else "unknown",
+                      limit_setting("SUPPORT_CREATE_LIMIT_PER_HOUR", 20), 3600)
         return service.create_conversation()
 
     @router.get("/support/conversations/{conversation_id}")
@@ -78,7 +110,22 @@ def build_router(service, store, gateway) -> APIRouter:
 
     @router.post("/support/conversations/{conversation_id}/messages")
     def message(conversation_id: str, payload: MessageInput, x_session_token: str = Header(default="")):
+        store.authorize(conversation_id, x_session_token)
+        limiter.check("conversation_message", conversation_id,
+                      limit_setting("SUPPORT_MESSAGE_LIMIT_PER_MINUTE", 20), 60)
         return service.chat(conversation_id, x_session_token, payload.message)
+
+    @router.post("/support/conversations/{conversation_id}/close")
+    def close_visitor(conversation_id: str, x_session_token: str = Header(default="")):
+        return service.close_conversation(conversation_id, x_session_token)
+
+    @router.delete("/support/conversations/{conversation_id}")
+    def delete_visitor(conversation_id: str, payload: ConfirmationInput, x_session_token: str = Header(default="")):
+        return service.delete_conversation(conversation_id, x_session_token)
+
+    @router.delete("/support/conversations/{conversation_id}/leads")
+    def withdraw_visitor(conversation_id: str, payload: ConfirmationInput, x_session_token: str = Header(default="")):
+        return service.withdraw_lead(conversation_id, x_session_token)
 
     @router.post("/support/conversations/{conversation_id}/leads", status_code=201)
     def lead(conversation_id: str, payload: LeadInput, x_session_token: str = Header(default="")):
@@ -111,6 +158,43 @@ def build_router(service, store, gateway) -> APIRouter:
     @admin.get("/conversations/{conversation_id}")
     def admin_conversation(conversation_id: str):
         return store.admin_get_conversation(conversation_id)
+
+    @admin.post("/conversations/{conversation_id}/close")
+    def close_admin(conversation_id: str):
+        return store.close_conversation(conversation_id, actor="admin")
+
+    @admin.post("/conversations/{conversation_id}/resume")
+    def resume_admin(conversation_id: str):
+        return store.resume_ai(conversation_id)
+
+    @admin.delete("/conversations/{conversation_id}")
+    def delete_admin(conversation_id: str, payload: ConfirmationInput):
+        return store.delete_conversation(conversation_id, actor="admin")
+
+    @admin.delete("/conversations/{conversation_id}/lead")
+    def withdraw_admin(conversation_id: str, payload: ConfirmationInput):
+        return store.delete_lead(conversation_id, actor="admin")
+
+    @admin.post("/privacy/retention/preview")
+    def retention_preview(payload: RetentionInput):
+        return store.purge_expired(payload.days, dry_run=True)
+
+    @admin.post("/privacy/retention/purge")
+    def retention_purge(payload: PurgeInput):
+        return store.purge_expired(payload.days, dry_run=False)
+
+    @admin.get("/audit")
+    def audit(limit: int = Query(100, ge=1, le=1000)):
+        return store.list_audit_events(limit=limit)
+
+    @admin.get("/limits")
+    def resource_limits():
+        return {"rate_limits": {
+            "create_per_hour": limit_setting("SUPPORT_CREATE_LIMIT_PER_HOUR", 20),
+            "message_per_minute": limit_setting("SUPPORT_MESSAGE_LIMIT_PER_MINUTE", 20)},
+            "model_budget": {"scope": "customer_service", **service.budget.summary()},
+            "retention_days": limit_setting("SUPPORT_RETENTION_DAYS", 30, minimum=1, maximum=36500),
+            "model": gateway.status()}
 
     @admin.get("/handoffs")
     def list_handoffs(status: str | None = None):
