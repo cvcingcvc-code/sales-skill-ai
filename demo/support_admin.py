@@ -43,6 +43,8 @@ class SupportAPI:
                 message = "BLOCKED：访问未获授权，请检查对应的管理员或会话凭证。"
             elif code in {502, 503, 504}:
                 message = "BLOCKED：模型或客服服务暂不可用，请检查配置和网络。"
+            elif code == 429:
+                message = "请求过于频繁或已达到调用预算，请稍后重试或联系管理员。"
             elif code == 404:
                 message = "请求的记录不存在或已不可访问。"
             elif code in {400, 409, 422}:
@@ -146,6 +148,8 @@ def _render_message_metadata(payload: dict):
         st.warning("BLOCKED：本次真实模型调用未完成。检索或人工转接结果不代表模型调用成功。")
     if str(model_status).upper() == "MOCK" or "mock" in str(source).lower():
         st.warning("MOCK：这是测试替身结果，不能作为真实模型调用成功的依据。")
+    if str(model_status).upper() == "DISABLED":
+        st.info("DISABLED：管理员已主动暂停模型；当前未连接本地或云端模型。")
     if str(model_status).upper() == "NOT_CALLED":
         st.caption("本次请求未调用模型。")
     if payload.get("need_summary"):
@@ -187,6 +191,9 @@ def _chat_test(api: SupportAPI):
     st.info(st.session_state.get("support_privacy_notice", "会话消息将保存用于客服服务。"))
     path = f"/support/conversations/{_id(session_id)}"
     conversation = _call(api, "GET", path, session_token=session_token)
+    closed = isinstance(conversation, dict) and conversation.get("status") == "closed"
+    if closed:
+        st.info("会话已关闭，可查看记录或在访客页面执行隐私删除；不能继续发送消息、留资或转人工。")
     if isinstance(conversation, dict):
         st.caption(f"会话：{session_id} · 状态：{conversation.get('status', 'unknown')}")
         for message in _rows(conversation.get("messages", [])):
@@ -195,7 +202,7 @@ def _chat_test(api: SupportAPI):
                 st.write(message.get("content", message.get("message", "")))
     with st.form("support_chat_form", clear_on_submit=True):
         message = st.text_area("客户消息", placeholder="例如：预算 500 元，有适合办公的商品吗？", max_chars=2000)
-        send = st.form_submit_button("发送客服消息")
+        send = st.form_submit_button("发送客服消息", disabled=closed)
     if send:
         if not message.strip():
             st.warning("请先输入消息。")
@@ -212,7 +219,7 @@ def _chat_test(api: SupportAPI):
         name = st.text_input("称呼（可选）", max_chars=100, key="support_lead_name")
         contact = st.text_input("联系方式（手机号或邮箱）", max_chars=200, key="support_lead_contact")
         need = st.text_area("需要人工跟进的需求", max_chars=1000, key="support_lead_need")
-        save_lead = st.form_submit_button("保存客户线索")
+        save_lead = st.form_submit_button("保存客户线索", disabled=closed)
     if save_lead:
         if not consent:
             st.warning("未取得同意，未发送或保存客户线索。")
@@ -225,7 +232,7 @@ def _chat_test(api: SupportAPI):
                 st.success("已按你的同意保存联系信息与需求。")
     with st.form("support_handoff_form"):
         reason = st.text_area("申请人工接管的原因", value="需要人工协助", max_chars=200)
-        handoff = st.form_submit_button("转接人工客服")
+        handoff = st.form_submit_button("转接人工客服", disabled=closed)
     if handoff:
         if _call(api, "POST", path + "/handoff", body={"reason": reason}, session_token=session_token) is not None:
             st.success("人工接管请求已提交。")
@@ -235,18 +242,107 @@ def _conversation_history(api: SupportAPI, authorized: bool):
     st.subheader("客户会话")
     if not authorized:
         return
+    notice = st.session_state.pop("support_conversation_notice", None)
+    if notice:
+        st.success(notice)
+    reset_lead = st.session_state.pop("support_reset_lead_confirmation", None)
+    if reset_lead:
+        st.session_state[f"lead_delete_confirm_{reset_lead}"] = False
     rows = _rows(_call(api, "GET", "/admin/conversations", admin=True), "conversations")
-    _table(rows, ("id", "status", "need_summary", "created_at", "updated_at"))
-    if rows:
-        selected = st.selectbox("查看会话", [str(row["id"]) for row in rows if row.get("id")])
-        conversation = _call(api, "GET", "/admin/conversations/" + _id(selected), admin=True)
+    _table(rows, ("id", "status", "need_summary", "created_at", "last_activity_at"))
+    ids = [str(row["id"]) for row in rows if row.get("id")]
+    if ids:
+        selected = st.selectbox("查看会话", ids)
+        path = "/admin/conversations/" + _id(selected)
+        conversation = _call(api, "GET", path, admin=True)
         if isinstance(conversation, dict):
+            state = conversation.get("status", "unknown")
+            st.caption(f"状态：{state} · 最近活动：{conversation.get('last_activity_at', '未知')}")
             st.write("需求摘要：", conversation.get("need_summary", ""))
             for message in _rows(conversation.get("messages", [])):
                 st.write(f"{message.get('role', '')}：", message.get("content", ""))
+            handoffs = _call(api, "GET", "/admin/handoffs", admin=True)
+            pending_known = isinstance(handoffs, (list, dict))
+            pending = [row for row in _rows(handoffs, "handoffs")
+                       if row.get("conversation_id") == selected and row.get("status") == "pending"]
+            if pending:
+                st.info("请先在人工接管队列回复并完成全部待办，再恢复 AI。")
+            if st.button("关闭所选会话", disabled=state == "closed", key=f"close_{selected}"):
+                if _call(api, "POST", path + "/close", body={}, admin=True) is not None:
+                    st.session_state.support_conversation_notice = "会话已关闭；关闭后不能发送消息或留资。"
+                    st.rerun()
+            if st.button("恢复所选会话的 AI", disabled=state != "human" or bool(pending) or not pending_known,
+                         key=f"resume_{selected}"):
+                if _call(api, "POST", path + "/resume", body={}, admin=True) is not None:
+                    st.session_state.support_conversation_notice = "AI 已恢复；模型是否启用仍由后端配置决定。"
+                    st.rerun()
+            lead_confirm = st.checkbox("确认撤回所选会话的联系线索", value=False, key=f"lead_delete_confirm_{selected}")
+            if st.button("撤回所选联系线索", disabled=not lead_confirm, key=f"lead_delete_{selected}"):
+                if _call(api, "DELETE", path + "/lead", body={"confirm": True}, admin=True) is not None:
+                    st.session_state.support_conversation_notice = "联系线索已撤回；会话消息仍按保留策略管理。"
+                    st.session_state.support_reset_lead_confirmation = selected
+                    st.rerun()
+            st.caption("永久删除会移除所选会话、消息、线索和关联接管记录，仅保留无正文的审计元数据。")
+            delete_confirm = st.checkbox("我确认永久删除所选会话及关联数据，且无法恢复", value=False,
+                                         key=f"conversation_delete_confirm_{selected}")
+            if st.button("永久删除所选会话", disabled=not delete_confirm, key=f"conversation_delete_{selected}"):
+                if _call(api, "DELETE", path, body={"confirm": True}, admin=True) is not None:
+                    st.session_state.support_conversation_notice = "会话已永久删除。"
+                    st.rerun()
     st.write("已同意保存的客户线索（仅管理员可见）")
     _table(_rows(_call(api, "GET", "/admin/leads", admin=True), "leads"),
            ("id", "conversation_id", "name", "contact", "need", "consent_version", "consent_at"))
+
+
+def _privacy(api: SupportAPI, authorized: bool):
+    st.subheader("隐私与审计")
+    if not authorized:
+        return
+    notice = st.session_state.pop("support_privacy_notice_result", None)
+    if notice:
+        st.success(notice)
+    if st.session_state.pop("support_retention_clear_confirm", False):
+        st.session_state["support_retention_confirm"] = False
+    st.write("仅清理已关闭、超过保留天数且无待办人工接管的会话及关联记录。先预览，再明确确认。")
+    limits = _call(api, "GET", "/admin/limits", admin=True)
+    configured_days = limits.get("retention_days", 90) if isinstance(limits, dict) else 90
+    if type(configured_days) is not int or not 1 <= configured_days <= 36500:
+        configured_days = 90
+    days = st.number_input("会话保留天数", min_value=1, max_value=36500, value=configured_days, step=1,
+                           key="support_retention_days")
+    if st.session_state.get("support_retention_previous_days") != int(days):
+        st.session_state.pop("support_retention_preview", None)
+        st.session_state["support_retention_confirm"] = False
+        st.session_state.support_retention_previous_days = int(days)
+    if st.button("预览到期数据"):
+        # A fresh preview invalidates any earlier deletion consent.
+        st.session_state.pop("support_retention_preview", None)
+        st.session_state["support_retention_confirm"] = False
+        preview = _call(api, "POST", "/admin/privacy/retention/preview", body={"days": int(days)}, admin=True)
+        if isinstance(preview, dict) and preview.get("dry_run") is True:
+            st.session_state.support_retention_preview = {"days": int(days), "result": preview}
+    saved = st.session_state.get("support_retention_preview")
+    current_preview = isinstance(saved, dict) and saved.get("days") == int(days)
+    if current_preview:
+        result = saved.get("result", {})
+        st.caption(f"预览截止时间：{result.get('cutoff', '未知')}；候选会话：{result.get('eligible_count', '未知')}")
+        counts = result.get("counts")
+        if isinstance(counts, dict):
+            _table([counts], ("conversations", "messages", "handoffs", "leads", "model_usage"))
+    else:
+        st.info("请先预览当前保留天数对应的数据。修改天数后需要重新预览。")
+    confirm = st.checkbox("我已核对当前预览，确认永久清理到期会话及关联数据，且无法恢复", value=False,
+                          key="support_retention_confirm", disabled=not current_preview)
+    if st.button("永久清理到期数据", disabled=not current_preview or not confirm):
+        result = _call(api, "POST", "/admin/privacy/retention/purge", body={"days": int(days), "confirm": True}, admin=True)
+        if isinstance(result, dict):
+            st.session_state.support_privacy_notice_result = f"清理完成：删除 {result.get('deleted_count', '未知')} 个会话。下一次清理需要重新预览并确认。"
+            st.session_state.pop("support_retention_preview", None)
+            st.session_state.support_retention_clear_confirm = True
+            st.rerun()
+    st.write("最近审计事件（仅操作元数据，不含客户正文或凭证）")
+    _table(_rows(_call(api, "GET", "/admin/audit?limit=100", admin=True), "events", "audit"),
+           ("id", "event", "actor", "object_id", "created_at"))
 
 
 def _handoffs(api: SupportAPI, authorized: bool):
@@ -278,12 +374,16 @@ def _model_status(api: SupportAPI, authorized: bool):
     if isinstance(status, dict):
         # Do not dump provider configuration: it may contain credentials.
         _table([status], ("provider", "model", "status", "available", "configured"))
+        if str(status.get("status", "")).upper() == "DISABLED":
+            st.info("DISABLED：管理员已主动暂停模型。当前工作台可管理商品、测试规则和处理人工接管；本地模型部署完成后再按部署说明启用。")
         if str(status.get("status", "")).upper() == "BLOCKED":
             st.warning("BLOCKED：当前模型配置或连通性不可用，尚未通过真实模型验收。")
         local_provider = status.get("local_provider")
         if isinstance(local_provider, dict):
             st.write("Ollama 本地模型")
             _table([local_provider], ("provider", "model", "status", "available", "configured"))
+            if str(local_provider.get("status", "")).upper() == "DISABLED":
+                st.caption("Ollama：主动暂停，未尝试连接本地服务。")
             if str(local_provider.get("status", "")).upper() == "BLOCKED":
                 st.info("Ollama：不可用。请先部署并配置本地模型，再验证连通性。")
         providers = status.get("providers")
@@ -295,6 +395,18 @@ def _model_status(api: SupportAPI, authorized: bool):
         elif isinstance(providers, list):
             _table(_rows(providers), ("provider", "model", "status", "available", "configured"))
         st.caption("配置存在不等于真实调用成功；真实连通性以请求结果为准。Ollama 未部署时应显示不可用。")
+    limits = _call(api, "GET", "/admin/limits", admin=True)
+    if isinstance(limits, dict):
+        rate_limits = limits.get("rate_limits")
+        if isinstance(rate_limits, dict):
+            st.write("后端请求限流")
+            _table([rate_limits], ("create_per_hour", "message_per_minute"))
+        budget = limits.get("model_budget")
+        if isinstance(budget, dict):
+            st.write("模型调用预算（由后端强制执行）")
+            _table([budget], ("day", "timezone", "daily_call_limit", "daily_token_limit", "calls", "tokens", "remaining_calls", "remaining_tokens"))
+            _table([budget], ("max_input_tokens", "max_output_tokens", "reserved_calls", "completed_calls", "failed_calls", "daily_cost_limit", "cost_status"))
+            st.caption("Token 为保守预留额度，包含失败或缺少用量的调用；缺失或未知的用量不视为零。预算日期按 UTC 计算。")
     usage = _call(api, "GET", "/admin/model/usage", admin=True)
     if isinstance(usage, dict):
         _table([usage], ("total_calls", "blocked_calls", "prompt_tokens", "completion_tokens", "unknown_cost_calls"))
@@ -326,8 +438,8 @@ def render_support_admin(admin_token: str = ""):
     authorized = bool(admin_token)
     if not authorized:
         st.warning("BLOCKED：管理页面需要先登录当前浏览器会话。")
-    tabs = st.tabs(["产品与知识库", "AI 客服测试", "客户会话", "人工接管队列", "模型状态和调用成本"])
-    for tab, renderer in zip(tabs, (_managed_catalog, _chat_test, _conversation_history, _handoffs, _model_status)):
+    tabs = st.tabs(["产品与知识库", "AI 客服测试", "客户会话", "人工接管队列", "模型状态和调用成本", "隐私与审计"])
+    for tab, renderer in zip(tabs, (_managed_catalog, _chat_test, _conversation_history, _handoffs, _model_status, _privacy)):
         with tab:
             if renderer is _chat_test:
                 renderer(api)
