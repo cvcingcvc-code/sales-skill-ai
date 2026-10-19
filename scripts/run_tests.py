@@ -6,6 +6,7 @@ process enables only mocked provider contracts; socket connections are denied.
 """
 
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
@@ -14,11 +15,31 @@ import unittest
 from unittest.mock import patch
 
 
-def main():
+def _write_report(path, report):
+    """Replace a complete report atomically without exposing partial JSON."""
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".offline-report-", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(report, stream, sort_keys=True, indent=2)
+            stream.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pattern", default="test_*.py")
     parser.add_argument("--quiet", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--fail-on-skip", action="store_true",
+                        help="Fail when any test is skipped; use this for the CI quality gate.")
+    parser.add_argument("--report-json", type=Path,
+                        help="Write fixed offline status and counts, without test or environment details.")
+    args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
     blocked_attempts = []
@@ -51,7 +72,31 @@ def main():
                                                         top_level_dir=str(root))
             result = unittest.TextTestRunner(verbosity=1 if args.quiet else 2).run(suite)
     print(f"Offline network guard: {len(blocked_attempts)} connection attempts; no live model validation.")
-    return 0 if result.wasSuccessful() and not blocked_attempts else 1
+    successful = (result.testsRun > 0 and result.wasSuccessful() and not blocked_attempts
+                  and (not args.fail_on_skip or not result.skipped))
+    report = {
+        "scope": "offline_mock_regression", "model_validation": "NOT_RUN",
+        "status": "PASS" if successful else "FAIL", "fail_on_skip": args.fail_on_skip,
+        "run": result.testsRun, "fail": len(result.failures), "error": len(result.errors),
+        "skipped": len(result.skipped), "expected_failures": len(result.expectedFailures),
+        "unexpected_successes": len(result.unexpectedSuccesses),
+        "network_attempts": len(blocked_attempts),
+    }
+    if not result.testsRun:
+        print("Offline regression failed: no tests ran.", file=sys.stderr)
+    if args.fail_on_skip and result.skipped:
+        print("Offline regression failed: skipped tests are not allowed.", file=sys.stderr)
+    if args.report_json is not None:
+        # Fixed fields only: no names, paths, exceptions, customer data or secrets.
+        try:
+            _write_report(args.report_json, report)
+        except (OSError, ValueError):
+            report["status"] = "FAIL"
+            print(json.dumps(report, sort_keys=True))
+            print("Offline regression failed: JSON report could not be written.", file=sys.stderr)
+            return 1
+        print(json.dumps(report, sort_keys=True))
+    return 0 if successful else 1
 
 
 if __name__ == "__main__":
