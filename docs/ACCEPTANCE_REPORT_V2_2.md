@@ -17,7 +17,7 @@
 
 | 检查 | 结果 |
 | --- | --- |
-| `.venv/bin/python scripts/run_tests.py --quiet --strict --report-json /tmp/sales-v2.2-tests.json` | PASS，412 项，失败/错误/跳过/预期失败均为 0，网络连接尝试 0 |
+| `.venv/bin/python scripts/run_tests.py --quiet --strict --report-json /tmp/sales-v2.2-tests-final.json` | PASS，412 项，失败/错误/跳过/预期失败均为 0，网络连接尝试 0 |
 | `.venv/bin/python scripts/run_tests.py --pattern test_retrieval_quality.py --quiet --strict` | PASS，26 项 |
 | `scripts/check_local_setup.py --json` | `OFFLINE_READY`，依赖和本地配置检查通过，模型执行 `DISABLED` |
 | `scripts/demo_workflow.py --mock` | `MOCK_DEMO_COMPLETE`，商品、会话、需求、明确同意留资、人工接管、恢复、撤回和删除 8 项通过；这是合成 Mock 演示 |
@@ -25,7 +25,7 @@
 | 本地 API + Streamlit 冒烟 | PASS，健康、商品、未授权拒绝、管理授权、Ollama 暂停状态、调用额度范围及 UI 健康检查通过；临时服务已停止 |
 | `git diff --check` 与原销售模块文件差异检查 | PASS，无空白错误；原有训练/评分回归文件未修改 |
 
-计数来源是本次严格 runner 输出；安全摘要保存在仓库外 `/tmp/sales-v2.2-tests.json`。本机没有执行 DeepSeek 或 Ollama 真实推理验收，不能据此宣称密钥、远端模型、部署或真实客服准确率已验证。
+计数来源是本次严格 runner 输出；安全摘要保存在仓库外 `/tmp/sales-v2.2-tests-final.json`。本机没有执行 DeepSeek 或 Ollama 真实推理验收，不能据此宣称密钥、远端模型、部署或真实客服准确率已验证。
 
 ## 阻断与后续
 
