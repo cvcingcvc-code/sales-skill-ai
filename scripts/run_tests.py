@@ -36,7 +36,9 @@ def main(argv=None):
     parser.add_argument("--pattern", default="test_*.py")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--fail-on-skip", action="store_true",
-                        help="Fail when any test is skipped; use this for the CI quality gate.")
+                        help="Fail when any test is skipped; preserves expected-failure semantics.")
+    parser.add_argument("--strict", action="store_true",
+                        help="CI gate: reject both skipped tests and expected failures.")
     parser.add_argument("--report-json", type=Path,
                         help="Write fixed offline status and counts, without test or environment details.")
     args = parser.parse_args(argv)
@@ -72,11 +74,13 @@ def main(argv=None):
                                                         top_level_dir=str(root))
             result = unittest.TextTestRunner(verbosity=1 if args.quiet else 2).run(suite)
     print(f"Offline network guard: {len(blocked_attempts)} connection attempts; no live model validation.")
+    fail_on_skip = args.fail_on_skip or args.strict
     successful = (result.testsRun > 0 and result.wasSuccessful() and not blocked_attempts
-                  and (not args.fail_on_skip or not result.skipped))
+                  and (not fail_on_skip or not result.skipped)
+                  and (not args.strict or not result.expectedFailures))
     report = {
         "scope": "offline_mock_regression", "model_validation": "NOT_RUN",
-        "status": "PASS" if successful else "FAIL", "fail_on_skip": args.fail_on_skip,
+        "status": "PASS" if successful else "FAIL", "strict": args.strict, "fail_on_skip": fail_on_skip,
         "run": result.testsRun, "fail": len(result.failures), "error": len(result.errors),
         "skipped": len(result.skipped), "expected_failures": len(result.expectedFailures),
         "unexpected_successes": len(result.unexpectedSuccesses),
@@ -84,8 +88,10 @@ def main(argv=None):
     }
     if not result.testsRun:
         print("Offline regression failed: no tests ran.", file=sys.stderr)
-    if args.fail_on_skip and result.skipped:
+    if fail_on_skip and result.skipped:
         print("Offline regression failed: skipped tests are not allowed.", file=sys.stderr)
+    if args.strict and result.expectedFailures:
+        print("Offline regression failed: expected failures are not allowed in strict mode.", file=sys.stderr)
     if args.report_json is not None:
         # Fixed fields only: no names, paths, exceptions, customer data or secrets.
         try:

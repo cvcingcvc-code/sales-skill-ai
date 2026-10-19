@@ -108,11 +108,52 @@ class OfflineRunnerTests(unittest.TestCase):
                          ("FAIL", 2, 1, 1))
         self.assertEqual(report["scope"], "offline_mock_regression")
         self.assertEqual(report["model_validation"], "NOT_RUN")
-        self.assertEqual(set(report), {"scope", "model_validation", "status", "fail_on_skip", "run", "fail",
+        self.assertEqual(set(report), {"scope", "model_validation", "status", "strict", "fail_on_skip", "run", "fail",
                                       "error", "skipped", "expected_failures", "unexpected_successes", "network_attempts"})
         serialized = self.report_path.read_text(encoding="utf-8")
         for private in ("fixture-private-credential", "fixture-customer-contact", "test_private", str(self.root)):
             self.assertNotIn(private, serialized)
+
+    def test_strict_rejects_expected_failure_instead_of_reporting_pass(self):
+        code, report, _, errors, _ = self.run_fixture('''
+            class Example(unittest.TestCase):
+                @unittest.expectedFailure
+                def test_known_defect(self):
+                    self.assertEqual(1, 2)
+        ''', arguments=("--strict",))
+        self.assertEqual(code, 1)
+        self.assertEqual((report["status"], report["run"], report["expected_failures"]), ("FAIL", 1, 1))
+        self.assertTrue(report["strict"])
+        self.assertIn("expected failures are not allowed", errors)
+
+    def test_expected_failure_remains_optional_outside_strict_mode(self):
+        for arguments in ((), ("--fail-on-skip",)):
+            with self.subTest(arguments=arguments):
+                code, report, _, _, _ = self.run_fixture('''
+                    class Example(unittest.TestCase):
+                        @unittest.expectedFailure
+                        def test_known_defect(self):
+                            self.assertEqual(1, 2)
+                ''', arguments=arguments)
+                self.assertEqual((code, report["status"], report["expected_failures"]), (0, "PASS", 1))
+                self.assertFalse(report["strict"])
+
+    def test_strict_rejects_skips_but_accepts_completed_success(self):
+        skipped = self.run_fixture('''
+            class Example(unittest.TestCase):
+                @unittest.skip("fixture only")
+                def test_skip(self):
+                    pass
+        ''', arguments=("--strict",))
+        self.assertEqual((skipped[0], skipped[1]["status"], skipped[1]["skipped"]), (1, "FAIL", 1))
+        completed = self.run_fixture('''
+            class Example(unittest.TestCase):
+                def test_completed(self):
+                    self.assertTrue(True)
+        ''', arguments=("--strict",))
+        self.assertEqual((completed[0], completed[1]["status"], completed[1]["run"]), (0, "PASS", 1))
+        self.assertTrue(completed[1]["strict"])
+        self.assertTrue(completed[1]["fail_on_skip"])
 
     def test_caught_network_attempt_still_fails_without_connecting(self):
         code, report, _, _, _ = self.run_fixture('''
