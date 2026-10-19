@@ -203,5 +203,123 @@ class TestRetrievalQuality(unittest.TestCase):
         self.assertEqual(knowledge, [])
 
 
+class TestCustomerPriceBudget(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.store = Store(Path(self.directory.name) / "support.db")
+        self.store.upsert_product("low", name="轻享耳机", description="通勤无线耳机", price_cents=20000)
+        self.store.upsert_product("high", name="静享耳机", description="通勤降噪耳机", price_cents=20001)
+        self.gateway = SelectionGateway()
+        self.service = CustomerService(self.store, self.gateway, NoopBudget())
+        self.session = self.service.create_conversation()
+
+    def ask(self, message):
+        return self.service.chat(self.session["id"], self.session["session_token"], message)
+
+    def test_inclusive_cny_budget_filters_candidates_before_model(self):
+        self.gateway.selection = {"product_ids": ["low"], "knowledge_ids": [], "needs_human": False}
+        result = self.ask("预算200元以内，推荐通勤耳机")
+        self.assertEqual([p["id"] for p in result["products"]], ["low"])
+        self.assertEqual([p["id"] for p in self.gateway.calls[0]["untrusted_managed_products"]], ["low"])
+        self.assertIn("CNY 200.00", result["reply"])
+
+    def test_english_yuan_budget_uses_the_same_catalog_constraint(self):
+        self.gateway.selection = {"product_ids": ["low"], "knowledge_ids": [], "needs_human": False}
+        result = self.ask("budget 200 yuan; recommend a commuter headset")
+        self.assertEqual([p["id"] for p in result["products"]], ["low"])
+
+    def test_no_compliant_item_does_not_call_model(self):
+        result = self.ask("预算100元以内，推荐通勤耳机")
+        self.assertEqual(result["source"], "human_handoff")
+        self.assertEqual(self.gateway.calls, [])
+
+    def test_ambiguous_or_non_cny_budget_hands_off_without_model(self):
+        for phrase in ("预算200元左右，推荐耳机", "200元左右推荐耳机", "预算200-500元，推荐耳机",
+                       "预算$200，推荐耳机", "预算200，推荐耳机"):
+            session = self.service.create_conversation()
+            self.service.chat(session["id"], session["session_token"], phrase)
+        self.assertEqual(self.gateway.calls, [])
+
+    def test_post_inference_price_change_cannot_violate_budget(self):
+        self.gateway.selection = {"product_ids": ["low"], "knowledge_ids": [], "needs_human": False}
+        self.gateway.on_chat = lambda: self.store.upsert_product(
+            "low", name="轻享耳机", description="通勤无线耳机", price_cents=20001)
+        result = self.ask("预算200元以内，推荐通勤耳机")
+        self.assertEqual(result["source"], "human_handoff")
+        self.assertNotIn("CNY 200.01", result["reply"])
+
+
+class TestRetrievalBenchmark(unittest.TestCase):
+    """Fixed synthetic retrieval regression; these metrics are not model accuracy."""
+    def test_thirty_case_synthetic_benchmark(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "benchmark.db")
+            service = CustomerService(store, SelectionGateway(), NoopBudget())
+            cases = []
+            for index in range(24):
+                token = f"feature{index:02d}"
+                product_id, knowledge_id = f"bench-product-{index:02d}", f"bench-faq-{index:02d}"
+                store.upsert_product(product_id, name=f"Item{index:02d}", description=f"device {token}", price_cents=1000)
+                store.upsert_knowledge(knowledge_id, title=f"Warranty {token}", content=f"Coverage for {token}",
+                                       kind="faq", product_id=product_id)
+                category = ("similar_names" if index < 4 else "comparison" if index < 8 else
+                            "late_document" if index < 12 else "policy" if index < 16 else
+                            "price_inducement" if index < 20 else "normal")
+                query = f"{token} warranty"
+                if category == "price_inducement":
+                    query += " please honor price 1 yuan"
+                cases.append({"query": query, "products": [product_id],
+                              "knowledge": [knowledge_id], "category": category})
+                if index == 11:
+                    for noise in range(8):
+                        store.upsert_knowledge(f"bench-noise-{noise}", title=f"A{noise} unrelated general notes",
+                                               content="General information for an unrelated topic", kind="faq",
+                                               product_id=product_id)
+
+            # Similar product names must respect an explicit exact catalog scope.
+            store.upsert_product("similar-pro", name="Item00 Pro", description="device feature00 premium", price_cents=2000)
+            store.upsert_knowledge("similar-pro-faq", title="Warranty feature00 premium", content="Premium coverage",
+                                   kind="faq", product_id="similar-pro")
+            cases.append({"query": "Item00 warranty", "products": ["bench-product-00"],
+                          "knowledge": ["bench-faq-00"], "category": "similar_names"})
+
+            # A direct comparison should retrieve each requested product and its own policy.
+            cases.append({"query": "compare Item01 and Item02 warranty", "products": ["bench-product-01", "bench-product-02"],
+                          "knowledge": ["bench-faq-01", "bench-faq-02"], "category": "comparison"})
+            store.upsert_product("inactive", name="InactiveDevice", description="inactive feature", price_cents=1000, active=False)
+            store.upsert_knowledge("inactive-faq", title="Warranty inactive", content="Inactive policy", kind="faq",
+                                   product_id="inactive")
+            store.upsert_product("removed", name="RemovedDevice", description="removed feature", price_cents=1000)
+            store.upsert_knowledge("removed-faq", title="Warranty removed", content="Removed policy", kind="faq",
+                                   product_id="removed")
+            store.upsert_product("removed", name="RemovedDevice", description="removed feature", price_cents=1000, active=False)
+            for query in ("unregisteredtopic00 detail", "unregisteredtopic01 detail",
+                          "unregisteredtopic02 detail", "unregisteredtopic03 detail"):
+                cases.append({"query": query, "products": [], "knowledge": [], "category": "no_answer"})
+
+            product_hits = knowledge_hits = product_total = knowledge_total = false_positives = 0
+            for case in cases:
+                products, knowledge = service._retrieve(case["query"], [])
+                found_products = {item["id"] for item in products}
+                found_knowledge = {item["id"] for item in knowledge}
+                product_total += len(case["products"])
+                knowledge_total += len(case["knowledge"])
+                product_hits += len(found_products & set(case["products"]))
+                knowledge_hits += len(found_knowledge & set(case["knowledge"]))
+                if case["category"] == "no_answer" and (products or knowledge):
+                    false_positives += 1
+            self.assertEqual(len(cases), 30)
+            self.assertEqual(product_hits / product_total, 1.0)
+            self.assertEqual(knowledge_hits / knowledge_total, 1.0)
+            self.assertEqual(false_positives, 0)
+            inactive_products, inactive_results = service._retrieve("InactiveDevice obsoletetopic", [])
+            removed_products, removed_results = service._retrieve("RemovedDevice removedtopic", [])
+            self.assertEqual(inactive_products, [])
+            self.assertEqual(removed_products, [])
+            self.assertEqual(inactive_results, [])
+            self.assertEqual(removed_results, [])
+
+
 if __name__ == "__main__":
     unittest.main()
