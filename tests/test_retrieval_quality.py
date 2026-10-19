@@ -153,6 +153,26 @@ class TestRetrievalQuality(unittest.TestCase):
         _, knowledge = self.service._retrieve("这个静享耳机保修多久？", history)
         self.assertEqual([k["id"] for k in knowledge], ["p2-warranty"])
 
+    def test_pronoun_scope_does_not_expand_from_incidental_assistant_mentions(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        history = [{"role": "user", "content": "请介绍轻享耳机"},
+                   {"role": "assistant", "content": "轻享耳机采用静享耳机同款收纳盒。"}]
+        _, knowledge = self.service._retrieve("它的保修多久？", history)
+        self.assertEqual([k["id"] for k in knowledge], ["p1-warranty"])
+
+    def test_incidental_model_in_description_cannot_supply_followup_warranty(self):
+        self.store.upsert_product("p1", name="轻享耳机", description="采用静享耳机同款收纳盒", price_cents=19900)
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        introduction = self.chat("请介绍轻享耳机", product_ids=["p1"])
+        self.assertIsNone(introduction["handoff"])
+        self.assertIn("静享耳机", introduction["reply"])
+        result = self.chat("它的保修多久？", knowledge_ids=["p2-warranty"])
+        self.assertIsNotNone(result["handoff"])
+        self.assertNotIn("保修三年", result["reply"])
+        self.assertEqual(result["citations"], [])
+
     def test_product_id_prefix_is_not_an_explicit_match(self):
         self.store.upsert_product("p10", name="远航耳机", description="旅行专用耳机", price_cents=50000)
         self.knowledge("p1-warranty", "保修政策", "保修一年。")

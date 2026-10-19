@@ -161,11 +161,12 @@ class CustomerService:
         explicit = {pid for _, _, pid in _mention_spans(message, products)}
         if explicit:
             return message, explicit
-        # Resolve a follow-up against the latest catalog mention, not every
-        # model mentioned earlier in the conversation. Current names win.
+        # Inherit the user's latest explicit scope. Assistant descriptions and
+        # policy text may incidentally mention other models; those mentions
+        # must never expand what "it" refers to. Current user names win.
         if re.search(r"它|这个|这款|上述|前面|哪款|两款|它们", message):
             for item in reversed(history[-6:]):
-                if item["role"] not in ("user", "assistant"):
+                if item["role"] != "user":
                     continue
                 explicit = {pid for _, _, pid in _mention_spans(item["content"], products)}
                 if explicit:
