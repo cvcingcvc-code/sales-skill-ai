@@ -16,7 +16,7 @@
 | 检查 | 结果 |
 | --- | --- |
 | `.venv/bin/python scripts/run_tests.py --quiet --strict --report-json /tmp/sales-v2.2-tests.json` | PASS，412 项，失败/错误/跳过/预期失败均为 0，网络连接尝试 0 |
-| `test_retrieval_quality.py` 定向严格回归 | PASS，25 项；全量运行另覆盖新增英语预算案例 |
+| `test_retrieval_quality.py` 定向严格回归 | PASS，25 项；最终全量回归另覆盖新增英语预算案例 |
 | `scripts/check_local_setup.py --json` | `OFFLINE_READY`，依赖和本地配置检查通过，模型执行 `DISABLED` |
 | `scripts/demo_workflow.py --mock` | `MOCK_DEMO_COMPLETE`，商品、会话、需求、明确同意留资、人工接管、恢复、撤回和删除 8 项通过；这是合成 Mock 演示 |
 | `scripts/verify_live.py --provider ollama --output /tmp/sales-v2.2-live.json` | `BLOCKED`，退出码 2，原因 `disabled`；真实模型未调用 |
@@ -30,4 +30,4 @@
 - 真实模型端到端：`NOT_RUN`；模型按用户要求保持关闭。需要未来明确进入模型部署阶段后，在目标设备安装 Ollama、配置实际模型标签并重新运行真实验收。
 - 云端配置中已存在旧 DeepSeek 访问要求；本地工作流不需要它。不要为当前测试填写密钥，也不要发布会运行真实推理的配置。
 - 下一阶段按路线评估有界上下文打包与客服专用输出上限，再根据检索基准验证，不做无边界重构。
-- 本报告写作时远端分支推送与对应 GitHub Actions 尚待后续确认；不得把本地 PASS 视为远端 CI PASS。
+- 远端分支 `codex/retrieval-budget-v2.2` 已推送并核对指向功能/文档提交 `5c236ffe3e3b297ccdd906ce6d611fbc5f2138c9`。`gh run list` 查询返回 HTTP `Forbidden`，所以对应 GitHub Actions 状态无法确认；Git push 成功不等于 CI 成功。
