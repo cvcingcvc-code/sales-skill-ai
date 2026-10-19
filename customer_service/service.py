@@ -100,6 +100,35 @@ def _without_product_mentions(text, products):
     return text
 
 
+def _budget_constraint(message):
+    """Return (maximum CNY cents, ambiguous) for an explicit customer budget.
+
+    Only explicit upper bounds and the form “budget N yuan” constrain results.
+    Ranges, approximate amounts and non-CNY currencies are sent for clarification.
+    This is a product-price constraint, independent of model usage limits.
+    """
+    amount = r"(?:(?:CNY\s*|RMB\s*|¥\s*)(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(?:元|人民币|yuan\b))"
+    patterns = (
+        rf"(?:预算\s*(?:是|为|在)?\s*|budget\s*(?:is\s*|of\s*)?|最多\s*|不超过\s*|不高于\s*|within\s+(?:CNY\s*)?){amount}(?:以内|以下|内)?",
+    )
+    if (re.search(r"(?:左右|大约|约|上下|到|至|[-—~～])", message)
+            and (re.search(r"预算|budget", message, re.I) or re.search(r"\d+(?:\.\d+)?\s*(?:元|人民币|CNY|RMB|¥|\$|€)", message, re.I))):
+        return None, True
+    matches = []
+    for pattern in patterns:
+        matches.extend(re.finditer(pattern, message, re.I))
+    # “预算 200 元” is a clear cap even without a trailing “以内”.
+    if matches:
+        try:
+            cents = [int(Decimal(match.group(1) or match.group(2)) * 100) for match in matches]
+        except (ValueError, ArithmeticError):
+            return None, True
+        return (min(cents), False) if len(set(cents)) == 1 else (None, True)
+    if re.search(r"预算|budget|under|below|less than|\$\s*\d|€\s*\d", message, re.I):
+        return None, True
+    return None, False
+
+
 class CustomerService:
     def __init__(self, store=None, gateway=None, budget=None):
         self.store = store or Store()
@@ -174,6 +203,9 @@ class CustomerService:
         return message, set()
 
     def _retrieve(self, message, history):
+        return self._retrieve_with_budget(message, history, None)
+
+    def _retrieve_with_budget(self, message, history, max_price_cents):
         products = self.store.list_products(active_only=True)
         knowledge = self.store.list_knowledge(active_only=True)
         text, explicit = self._retrieval_context(message, history, products)
@@ -193,6 +225,9 @@ class CustomerService:
             if score or generic:
                 ranked.append((score, product))
         ranked.sort(key=lambda pair: (-pair[0], pair[1]["id"]))
+        if max_price_cents is not None:
+            ranked = [pair for pair in ranked if pair[1]["currency"] == "CNY"
+                      and pair[1]["price_cents"] <= max_price_cents]
         found_products = [p for _, p in ranked[:6]]
         selected_ids = {p["id"] for p in found_products}
         ranked_knowledge = []
@@ -221,6 +256,8 @@ class CustomerService:
             reply = "客服不能访问其他客户数据、披露系统凭据或修改商品交易数据。已转人工核实您的请求。"
         elif reason == "knowledge_gap":
             reply = "现有受管理资料不足以确认答案，不能确认不存在或未登记的商品信息。已转人工处理。"
+        elif reason == "price_budget":
+            reply = "没有可确认符合您所述人民币预算的在售商品，或预算金额需要澄清。已转人工处理，不会推荐超预算商品。"
         else:
             reply = "已转人工处理本次请求。退款、付款或特殊优惠须经人工与后端权限校验，客服不会作出交易承诺。"
         self.store.add_message(cid, "assistant", reply, "human_handoff", expected_epoch=handoff["conversation_epoch"])
@@ -266,8 +303,13 @@ class CustomerService:
                     return changed
                 raise SupportError("conversation_changed", "会话状态已更新，请重试。", 409)
             return self._response(conversation_id, reply, "rule", "NOT_CALLED", [], [])
-        products, citations = self._retrieve(safe_message, conversation["messages"])
+        max_price_cents, ambiguous_budget = _budget_constraint(safe_message)
+        if ambiguous_budget:
+            return self._handoff_reply(conversation_id, "price_budget", expected_epoch=epoch)
+        products, citations = self._retrieve_with_budget(safe_message, conversation["messages"], max_price_cents)
         _, explicit_product_ids = self._retrieval_context(safe_message, conversation["messages"], products)
+        if max_price_cents is not None and not products:
+            return self._handoff_reply(conversation_id, "price_budget", expected_epoch=epoch)
         if not products and not citations:
             return self._handoff_reply(conversation_id, "knowledge_gap", expected_epoch=epoch)
         try:
@@ -333,6 +375,14 @@ class CustomerService:
             if any(p is None or not p["active"] for p in selected_products) or any(k["id"] not in current_knowledge for k in selected_knowledge):
                 return self._handoff_reply(conversation_id, "catalog_changed", status, expected_epoch=epoch)
             selected_knowledge = [current_knowledge[k["id"]] for k in selected_knowledge]
+            if max_price_cents is not None:
+                if any(p["currency"] != "CNY" or p["price_cents"] > max_price_cents for p in selected_products):
+                    return self._handoff_reply(conversation_id, "price_budget", status, expected_epoch=epoch)
+                for item in selected_knowledge:
+                    if item["product_id"]:
+                        linked = self.store.get_product(item["product_id"])
+                        if linked is None or linked["currency"] != "CNY" or linked["price_cents"] > max_price_cents:
+                            return self._handoff_reply(conversation_id, "price_budget", status, expected_epoch=epoch)
             selected_product_ids = {product["id"] for product in selected_products}
             for item in selected_knowledge:
                 linked_id = item["product_id"]
