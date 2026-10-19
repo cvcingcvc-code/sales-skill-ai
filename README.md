@@ -55,12 +55,14 @@ Windows 以及以后选择设备、安装本地模型的步骤见 [LOCAL_MODEL_D
 
 ```bash
 .venv/bin/python scripts/run_tests.py --quiet
+.venv/bin/python scripts/run_tests.py --quiet --strict --report-json /tmp/sales-offline-summary.json
 .venv/bin/python scripts/demo_workflow.py --mock
 MODEL_ENABLED=false .venv/bin/python scripts/demo_workflow.py
 MODEL_ENABLED=false .venv/bin/python scripts/verify_live.py --provider ollama --output /tmp/sales-local-acceptance.json
 ```
 
 - `run_tests.py` 使用临时数据库、隔离配置和禁止外连的测试进程，验证 Mock Provider 合约及业务回归；不会启用运行服务的模型。优先使用此入口，直接 unittest 可能继承 `.env` 中的暂停设置，使原测试的 Mock 合约前提不一致。
+- 提交前采用第二条严格命令，要求实际运行测试且没有跳过项或预期失败；需要 Node.js 执行前端行为测试。GitHub Actions 对推送和 PR 运行同一门槛，JSON 只记录固定结果及计数，不包含客户资料、凭据或异常正文。推送成功不代表远端 CI 已通过。
 - `--mock` 明确输出 `MOCK_DEMO_COMPLETE`，验证商品查询→回复→需求→同意留资→人工回复→明确恢复 AI→撤回留资→关闭/删除链路，不是真实模型验收。
 - 默认演示使用当前配置；暂停时为 `DISABLED`、退出码 2，模型缺失或故障为 `BLOCKED`，仍检查独立人工链路。
 - `verify_live.py` 不使用 Mock；退出码 0 为 PASS、1 为 FAIL、2 为 BLOCKED。当前暂停时原因是 `disabled`，不发出模型请求。以后按本地部署文档完成配置并显式开启后再真实验收，报告留在仓库外。
@@ -84,6 +86,9 @@ SQLite 提供共享请求限流和客服 UTC 每日次数/token/可选金额预�
 | [ACCEPTANCE_REPORT_V2.md](docs/ACCEPTANCE_REPORT_V2.md) | 本轮结果、Git 提交与阻断项 |
 | [ACCEPTANCE_REPORT.md](docs/ACCEPTANCE_REPORT.md) | V1 历史验收记录 |
 | [ROADMAP.md](docs/ROADMAP.md) | 本轮范围及以后真实模型/业务验收 |
+| [OPTIMIZATION_PLAN.md](docs/OPTIMIZATION_PLAN.md) | 优化优先级、改进依据及后续验收指标 |
+| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | 开发、严格回归、提交和自动同步 GitHub 的流程 |
+| [ACCEPTANCE_REPORT_V2_1.md](docs/ACCEPTANCE_REPORT_V2_1.md) | 检索、资料关联、预算预检及 CI 改进验收 |
 | [SECURITY.md](SECURITY.md) | 历史凭据暴露及待核验的撤销/轮换 |
 
 当前为单机 SQLite、单 API worker、关键词检索，未接入向量 RAG、多租户账户或分布式训练会话。公网 TLS、代理保护、备份与恢复仍需部署方配置；未进行真实公网部署、真实商家资料验收或本地模型回答效果验收。应用删除不保证历史备份和磁盘法证清除。DeepSeek 以后可选启用，历史密钥轮换未验证。

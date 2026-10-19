@@ -1,5 +1,7 @@
 # V2 交付状态与后续步骤
 
+V2.1 继续优化现有工作台：知识相关性与商品政策关联、预算前的无网络请求预检、GitHub 离线回归门槛。优先级及以后推进方式见 [OPTIMIZATION_PLAN.md](OPTIMIZATION_PLAN.md)，开发和自动同步约定见 [DEVELOPMENT.md](DEVELOPMENT.md)，本轮实测见 [ACCEPTANCE_REPORT_V2_1.md](ACCEPTANCE_REPORT_V2_1.md)。以下保留 V2 的业务与本地模型部署路线，模型仍保持暂停。
+
 本轮按“应用先完成，最后接本地模型”推进：保留 V1 培训与客服工作流，默认配置切换为 `MODEL_ENABLED=false`、`LLM_PROVIDER=ollama`、`OLLAMA_MODEL` 为空。真实模型接入延后，不要求先提供云端 API Key，也不安装 Ollama 或下载权重。实现与限制见 [ARCHITECTURE.md](ARCHITECTURE.md)，本轮实测以 [ACCEPTANCE_REPORT_V2.md](ACCEPTANCE_REPORT_V2.md) 为准；[ACCEPTANCE_REPORT.md](ACCEPTANCE_REPORT.md) 保留为 V1 历史记录。
 
 ## 本轮应用范围
