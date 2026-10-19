@@ -228,6 +228,9 @@ class TestCustomerPriceBudget(unittest.TestCase):
         self.gateway.selection = {"product_ids": ["low"], "knowledge_ids": [], "needs_human": False}
         result = self.ask("budget 200 yuan; recommend a commuter headset")
         self.assertEqual([p["id"] for p in result["products"]], ["low"])
+        session = self.service.create_conversation()
+        result = self.service.chat(session["id"], session["session_token"], "within CNY 200, recommend commuter headphones")
+        self.assertEqual([p["id"] for p in result["products"]], ["low"])
 
     def test_no_compliant_item_does_not_call_model(self):
         result = self.ask("预算100元以内，推荐通勤耳机")

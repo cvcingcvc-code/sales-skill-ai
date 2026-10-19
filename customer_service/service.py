@@ -109,7 +109,7 @@ def _budget_constraint(message):
     """
     amount = r"(?:(?:CNY\s*|RMB\s*|¥\s*)(\d+(?:\.\d{1,2})?)|(\d+(?:\.\d{1,2})?)\s*(?:元|人民币|yuan\b))"
     patterns = (
-        rf"(?:预算\s*(?:是|为|在)?\s*|budget\s*(?:is\s*|of\s*)?|最多\s*|不超过\s*|不高于\s*|within\s+(?:CNY\s*)?){amount}(?:以内|以下|内)?",
+        rf"(?:预算\s*(?:是|为|在)?\s*|budget\s*(?:is\s*|of\s*)?|最多\s*|不超过\s*|不高于\s*|within\s*){amount}(?:以内|以下|内)?",
     )
     if (re.search(r"(?:左右|大约|约|上下|到|至|[-—~～])", message)
             and (re.search(r"预算|budget", message, re.I) or re.search(r"\d+(?:\.\d+)?\s*(?:元|人民币|CNY|RMB|¥|\$|€)", message, re.I))):
