@@ -209,11 +209,24 @@ class ModelProvider(ABC):
         # UTF-8 byte count is a conservative token upper bound for the supported
         # byte-based model tokenizers. Framing allowance includes roles and chat
         # template markers; no external tokenizer or model download is needed.
-        estimate = sum(len(message["content"].encode("utf-8"))
-                       + len(message["role"].encode("utf-8")) + 32 for message in output)
-        if estimate > self.config.max_input_tokens:
+        if self._input_token_estimate(output) > self.config.max_input_tokens:
             raise ModelError("invalid_request", blocked=False)
         return output
+
+    @staticmethod
+    def _input_token_estimate(messages):
+        return sum(len(message["content"].encode("utf-8"))
+                   + len(message["role"].encode("utf-8")) + 32 for message in messages)
+
+    def validate_request(self, messages, system="", model=None) -> int:
+        """Validate locally; the returned bound is not measured provider usage.
+
+        Uses the same configuration, switch, message framing, and size check as
+        inference. A model override does not change the message-size estimate.
+        No transport or SDK is created and completion state remains untouched.
+        """
+        self._check()
+        return self._input_token_estimate(self._messages(messages, system))
 
     def status(self):
         error = self.config.configuration_error()
@@ -510,6 +523,14 @@ class ModelGateway:
         # Adapter completion/stream metadata belongs to one request. The public
         # provider remains a configuration template, never shared inference state.
         return type(self.provider)(self.config, transport=self.provider.transport)
+
+    def validate_request(self, messages, system="", model=None) -> int:
+        """Preflight without inference, budget reservation, or health mutation.
+
+        The integer uses the same conservative UTF-8 input upper bound as chat
+        and stream. Success confirms local request validity, never availability.
+        """
+        return self._request_provider().validate_request(messages, system, model)
 
     def chat(self, messages, system="", model=None) -> ModelResult:
         try:
