@@ -25,8 +25,6 @@ jobs:
       OLLAMA_MODEL: windows-no-model-call
       ADMIN_API_TOKEN: windows-runner-test-only-not-a-secret
       SUPPORT_API_URL: http://127.0.0.1:8080
-      DB_PATH: ${{ runner.temp }}\sales-training-windows.sqlite3
-      SUPPORT_DB_PATH: ${{ runner.temp }}\sales-support-windows.sqlite3
       SUPPORT_CREATE_LIMIT_PER_HOUR: "50"
       SUPPORT_MESSAGE_LIMIT_PER_MINUTE: "50"
     steps:
@@ -73,6 +71,8 @@ jobs:
           }
 
           try {
+            $env:DB_PATH = Join-Path $env:RUNNER_TEMP 'sales-training-windows.sqlite3'
+            $env:SUPPORT_DB_PATH = Join-Path $env:RUNNER_TEMP 'sales-support-windows.sqlite3'
             $python = (Get-Command python).Source
             $pythonVersion = (& $python --version 2>&1).ToString()
             if ($pythonVersion -notmatch '^Python 3\.12\.') { throw "Expected Python 3.12, got $pythonVersion" }
