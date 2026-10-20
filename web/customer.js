@@ -107,7 +107,7 @@ byId("chat-form").addEventListener("submit", (event) => {
     const result = await request(conversationPath() + "/messages", {message: byId("message").value});
     byId("message").value = ""; await refresh();
     if (result.model_status === "BLOCKED") status("模型调用 BLOCKED，本次没有生成模型回答，已转人工。");
-    else if (result.model_status === "DISABLED") status("模型已主动暂停，本次未连接模型；可查询管理资料或申请人工协助。");
+    else if (result.model_status === "DISABLED") status("DISABLED：模型已主动暂停，本次未连接模型；可查询管理资料或申请人工协助。");
     else if (result.handoff) status("已进入人工接管队列，可继续留言。");
     else status(result.model_status === "NOT_CALLED" ? "本次为规则提示，未调用模型。" : "答复引用已管理的商品与知识资料。");
   });

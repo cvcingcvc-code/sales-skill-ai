@@ -5,13 +5,14 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
 from fastapi.testclient import TestClient
 
 from agent_skill.api_server import create_app
-from core.model_gateway import ModelConfig, ModelGateway
+from core.model_gateway import ModelConfig, ModelError, ModelGateway
 from customer_service.store import Store
 
 
@@ -100,6 +101,87 @@ class TestPreflightBudget(unittest.TestCase):
         candidate_ids = {item["id"] for item in packed["untrusted_managed_knowledge"]}
         self.assertIn("relevant", candidate_ids)
         self.assertTrue(candidate_ids.isdisjoint({"a-noise", "b-noise", "c-noise"}))
+
+    def test_removed_product_id_cannot_be_selected_after_context_packing(self):
+        self.store.upsert_product("p2", name="第二合成试验杯", description="另一款合成测试商品。", price_cents=23000)
+
+        class TrimmedCandidateGateway:
+            def __init__(gateway_self):
+                gateway_self.candidate_ids_seen = []
+
+            @staticmethod
+            def status():
+                return {"status": "AVAILABLE", "configured": True,
+                        "provider": "mock", "model": "trimmed-candidate-test"}
+
+            def validate_request(gateway_self, messages, system="", model=None):
+                packed = json.loads(messages[0]["content"])
+                candidate_ids = [item["id"] for item in packed["untrusted_managed_products"]]
+                gateway_self.candidate_ids_seen.append(candidate_ids)
+                if "p1" in candidate_ids:
+                    raise ModelError("invalid_request", blocked=False)
+                return 1
+
+            @staticmethod
+            def chat(messages, system="", model=None):
+                # Simulate an invalid/buggy provider response selecting evidence
+                # that was present before packing but removed from this request.
+                return SimpleNamespace(text=json.dumps({"product_ids": ["p1"],
+                    "knowledge_ids": [], "needs_human": False}), provider="mock",
+                    model="trimmed-candidate-test", prompt_tokens=100,
+                    completion_tokens=20, estimated_cost=None)
+
+        gateway = TrimmedCandidateGateway()
+        self.app.state.customer_service.gateway = gateway
+        response = self.client.post(f"/support/conversations/{self.cid}/messages", headers=self.headers,
+            json={"message": "比较合成试验杯和第二合成试验杯"}).json()
+
+        self.assertEqual(gateway.candidate_ids_seen, [["p2", "p1"], ["p2"]])
+        self.assertEqual(response["model_status"], "BLOCKED")
+        self.assertEqual(response["source"], "human_handoff")
+        self.assertEqual(response["products"], [])
+        self.assertEqual(response["handoff"]["reason"], "model_unavailable")
+
+    def test_removed_policy_id_cannot_be_selected_after_context_packing(self):
+        for doc_id in ("a-policy", "z-removed-policy"):
+            self.store.upsert_knowledge(doc_id, title="合成试验杯保修政策",
+                content="仅供回归测试：本合成商品享有一年质量保修。", kind="policy", product_id="p1")
+
+        class TrimmedPolicyGateway:
+            def __init__(gateway_self):
+                gateway_self.candidate_ids_seen = []
+
+            @staticmethod
+            def status():
+                return {"status": "AVAILABLE", "configured": True,
+                        "provider": "mock", "model": "trimmed-policy-test"}
+
+            def validate_request(gateway_self, messages, system="", model=None):
+                packed = json.loads(messages[0]["content"])
+                candidate_ids = [item["id"] for item in packed["untrusted_managed_knowledge"]]
+                gateway_self.candidate_ids_seen.append(candidate_ids)
+                if "z-removed-policy" in candidate_ids:
+                    raise ModelError("invalid_request", blocked=False)
+                return 1
+
+            @staticmethod
+            def chat(messages, system="", model=None):
+                # The removed policy ID must be rejected even if a provider returns it.
+                return SimpleNamespace(text=json.dumps({"product_ids": [],
+                    "knowledge_ids": ["z-removed-policy"], "needs_human": False}),
+                    provider="mock", model="trimmed-policy-test", prompt_tokens=100,
+                    completion_tokens=20, estimated_cost=None)
+
+        gateway = TrimmedPolicyGateway()
+        self.app.state.customer_service.gateway = gateway
+        response = self.client.post(f"/support/conversations/{self.cid}/messages", headers=self.headers,
+            json={"message": "合成试验杯保修政策怎么办？"}).json()
+
+        self.assertEqual(gateway.candidate_ids_seen, [["a-policy", "z-removed-policy"], ["a-policy"]])
+        self.assertEqual(response["model_status"], "BLOCKED")
+        self.assertEqual(response["source"], "human_handoff")
+        self.assertEqual(response["citations"], [])
+        self.assertEqual(response["handoff"]["reason"], "model_unavailable")
 
     def test_customer_service_uses_its_smaller_output_limit_without_mutating_gateway(self):
         result = self.ask()
