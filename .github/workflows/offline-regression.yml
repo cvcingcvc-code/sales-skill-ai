@@ -1,0 +1,46 @@
+name: Offline regression
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MODEL_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+      - name: Install locked dependencies
+        run: |
+          python -m pip install -r requirements.lock
+          python -m pip check
+      - name: Verify JavaScript runtime
+        run: node --version
+      - name: Run strict offline regression
+        id: offline
+        run: python scripts/run_tests.py --quiet --strict --report-json "$RUNNER_TEMP/offline-summary.json"
+      - name: Retain offline counts
+        if: ${{ always() && (steps.offline.outcome == 'success' || steps.offline.outcome == 'failure') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: offline-regression
+          path: ${{ runner.temp }}/offline-summary.json
+          if-no-files-found: error
+          retention-days: 7

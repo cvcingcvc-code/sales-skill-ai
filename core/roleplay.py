@@ -76,16 +76,18 @@ class RoleplaySession:
 
         如果客户回复末尾包含 [RESULT: ...]，自动解析并标记结束。
         """
-        self.transcript.append({"role": "sales", "content": sales_message})
-        self.round += 1
+        if self.is_finished:
+            raise RuntimeError("会话已结束，请开始新的训练")
+        next_round = self.round + 1
 
+        # 模型失败时保留原记录，便于用户安全重试同一轮。
         # 构建对话历史用于 LLM 上下文
         history = self._format_history()
         user_prompt = (
             f"{history}\n\n"
             f"现在销售员说：「{sales_message}」\n\n"
             f"请以{self.customer_name}的身份回复。"
-            f"这是第{self.round}轮对话（最多{self.MAX_ROUNDS}轮）。"
+            f"这是第{next_round}轮对话（最多{self.MAX_ROUNDS}轮）。"
             f"记住：根据对方话术质量动态调整态度。"
         )
 
@@ -93,6 +95,9 @@ class RoleplaySession:
             messages=[{"role": "user", "content": user_prompt}],
             system=self._system_prompt,
         )
+
+        self.transcript.append({"role": "sales", "content": sales_message})
+        self.round = next_round
 
         # 检查结束标记
         done, result = self._parse_result(reply)

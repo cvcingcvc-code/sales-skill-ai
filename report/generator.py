@@ -8,6 +8,7 @@ from typing import Optional
 from jinja2 import Environment, FileSystemLoader
 
 from core import memory
+from scenarios.scenario_loader import load_scenario
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -36,8 +37,11 @@ def generate_report(
     recommended_scenarios = memory.get_recommended_scenarios(learner_id)
 
     # 获取最近一次会话详情
-    sessions = memory.get_learner_sessions(learner_id, limit=1)
-    latest = sessions[0] if sessions else None
+    sessions = memory.get_learner_sessions(learner_id, limit=-1 if scenario_id else 1)
+    latest = next((session for session in sessions
+                   if not scenario_id or session.get("scenario_id") == scenario_id), None)
+    scenario = load_scenario(latest["scenario_id"]) if latest else None
+    scenario = scenario or {}
 
     import json
     score_data = json.loads(latest["score_json"]) if latest and latest.get("score_json") else {}
@@ -57,10 +61,15 @@ def generate_report(
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "learner": learner,
         "progress": progress,
-        "scenario_name": latest.get("scenario_id", "未知") if latest else "无",
-        "difficulty": "未知",
-        "sales_objective": "未知",
+        "scenario_name": scenario.get("name", latest.get("scenario_id", "未知") if latest else "无"),
+        "difficulty": scenario.get("difficulty", "未知"),
+        "sales_objective": scenario.get("sales_objective", "未知"),
         "result_status": result_status,
+        "score_source": score_data.get("score_source", "legacy_invalid"),
+        "score_status": score_data.get("score_status", "invalid"),
+        "score_scale": memory.score_scale_info(score_data),
+        "score_error": score_data.get("error") or ("历史评分未记录来源，不能作为已验证模型评分。" if score_data and not score_data.get("score_status") else ""),
+        "calibration": score_data.get("calibration", {}),
         "total_score": score_data.get("total_score", "N/A"),
         "dimensions": score_data.get("dimensions", {}),
         "strengths": score_data.get("strengths", []),

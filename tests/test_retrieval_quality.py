@@ -1,0 +1,328 @@
+"""Deterministic retrieval and product-policy matching; model selections are mocks."""
+
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from types import SimpleNamespace
+
+from customer_service import CustomerService, Store
+
+
+class SelectionGateway:
+    def __init__(self):
+        self.selection = {"product_ids": [], "knowledge_ids": [], "needs_human": False}
+        self.on_chat = None
+        self.calls = []
+
+    def chat(self, messages, system="", model=None):
+        self.calls.append(json.loads(messages[0]["content"]))
+        if self.on_chat:
+            self.on_chat()
+        return SimpleNamespace(text=json.dumps(self.selection), provider="mock", model="offline-retrieval",
+                               prompt_tokens=20, completion_tokens=10, estimated_cost=None)
+
+
+class NoopBudget:
+    """No live calls or billing; budget behavior has a separate regression suite."""
+    def reserve(self, *_args):
+        return "offline-reservation"
+
+    def complete(self, *_args, **_kwargs):
+        pass
+
+
+class TestRetrievalQuality(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.store = Store(Path(self.directory.name) / "support.db")
+        self.store.upsert_product("p1", name="轻享耳机", description="轻便无线耳机，适合通勤", price_cents=19900)
+        self.store.upsert_product("p2", name="静享耳机", description="降噪无线耳机，适合通勤", price_cents=39900)
+        self.gateway = SelectionGateway()
+        self.service = CustomerService(self.store, self.gateway, NoopBudget())
+        self.session = self.service.create_conversation()
+
+    def knowledge(self, kid, title, content, product_id="p1", active=True):
+        return self.store.upsert_knowledge(kid, title=title, content=content, kind="policy",
+                                          product_id=product_id, active=active)
+
+    def chat(self, message, product_ids=(), knowledge_ids=()):
+        self.gateway.selection = {"product_ids": list(product_ids), "knowledge_ids": list(knowledge_ids), "needs_human": False}
+        return self.service.chat(self.session["id"], self.session["session_token"], message)
+
+    def add_overflow_documents(self):
+        for i in range(8):
+            self.knowledge(f"noise-{i}", f"A{i} 轻享耳机包装与耳机说明", "轻享耳机使用原厂纸盒，随附耳机收纳袋。")
+        self.knowledge("waterproof", "Z 防水等级", "防水等级为 IPX4，避免浸泡。")
+
+    def test_relevant_ninth_document_survives_eight_document_limit(self):
+        self.add_overflow_documents()
+        _, knowledge = self.service._retrieve("轻享耳机的防水等级是多少？", [])
+        self.assertEqual(knowledge[0]["id"], "waterproof")
+        self.assertLessEqual(len(knowledge), 8)
+
+    def test_shared_product_name_terms_do_not_beat_question_terms(self):
+        self.add_overflow_documents()
+        result = self.chat("轻享耳机的防水等级是多少？", knowledge_ids=["waterproof"])
+        self.assertIsNone(result["handoff"])
+        self.assertIn("IPX4", result["reply"])
+
+    def test_knowledge_order_is_stable_for_equal_relevance(self):
+        self.knowledge("b", "B 保修期限", "保修一年。")
+        self.knowledge("a", "A 保修期限", "保修一年。")
+        first = self.service._retrieve("轻享耳机保修期限", [])[1]
+        second = self.service._retrieve("轻享耳机保修期限", [])[1]
+        self.assertEqual([k["id"] for k in first], [k["id"] for k in second])
+
+    def test_explicit_model_excludes_other_models_policy_candidates(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        _, knowledge = self.service._retrieve("轻享耳机保修政策是什么？", [])
+        self.assertEqual([k["id"] for k in knowledge], ["p1-warranty"])
+
+    def test_named_model_cannot_receive_another_models_warranty(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        result = self.chat("轻享耳机的保修政策是什么？", ["p1"], ["p2-warranty"])
+        self.assertIsNotNone(result["handoff"])
+        self.assertNotIn("保修三年", result["reply"])
+        self.assertEqual(result["citations"], [])
+
+    def test_selected_product_and_policy_must_match_without_named_model(self):
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        result = self.chat("推荐耳机并说明保修政策", ["p1"], ["p2-warranty"])
+        self.assertIsNotNone(result["handoff"])
+        self.assertNotIn("保修三年", result["reply"])
+
+    def test_valid_knowledge_only_answer_identifies_real_associated_product(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        result = self.chat("轻享耳机保修多久？", knowledge_ids=["p1-warranty"])
+        self.assertIsNone(result["handoff"])
+        self.assertEqual(result["products"], [])
+        self.assertEqual(result["citations"][0]["product_name"], "轻享耳机")
+        self.assertIn("适用商品：轻享耳机", result["reply"])
+
+    def test_two_product_comparison_keeps_each_policy_label(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        result = self.chat("比较轻享耳机和静享耳机的保修政策", ["p1", "p2"], ["p1-warranty", "p2-warranty"])
+        self.assertIsNone(result["handoff"])
+        self.assertIn("适用商品：轻享耳机", result["reply"])
+        self.assertIn("适用商品：静享耳机", result["reply"])
+
+    def test_two_product_knowledge_only_comparison_remains_valid(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        result = self.chat("比较轻享耳机和静享耳机的保修政策", knowledge_ids=["p1-warranty", "p2-warranty"])
+        self.assertIsNone(result["handoff"])
+        self.assertEqual(len(result["citations"]), 2)
+
+    def test_general_policy_can_answer_specific_product_question(self):
+        self.knowledge("shipping", "发货政策", "通常两个工作日发货。", product_id=None)
+        result = self.chat("轻享耳机什么时候发货？", ["p1"], ["shipping"])
+        self.assertIsNone(result["handoff"])
+        self.assertNotIn("product_name", result["citations"][0])
+
+    def test_general_knowledge_only_answer_remains_valid(self):
+        self.knowledge("shipping", "发货政策", "通常两个工作日发货。", product_id=None)
+        result = self.chat("什么时候发货？", knowledge_ids=["shipping"])
+        self.assertIsNone(result["handoff"])
+        self.assertIn("两个工作日", result["reply"])
+
+    def test_policy_relinked_during_inference_cannot_change_consulted_model(self):
+        self.knowledge("warranty", "保修政策", "保修一年。")
+        self.gateway.on_chat = lambda: self.knowledge("warranty", "保修政策", "保修三年。", "p2")
+        result = self.chat("轻享耳机保修多久？", knowledge_ids=["warranty"])
+        self.assertIsNotNone(result["handoff"])
+        self.assertNotIn("保修三年", result["reply"])
+
+    def test_pronoun_uses_latest_named_model_instead_of_all_old_models(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        history = [{"role": "user", "content": "轻享耳机介绍"},
+                   {"role": "assistant", "content": "轻享耳机的说明"},
+                   {"role": "user", "content": "接着了解静享耳机"}]
+        _, knowledge = self.service._retrieve("它的保修多久？", history)
+        self.assertEqual([k["id"] for k in knowledge], ["p2-warranty"])
+
+    def test_current_explicit_model_takes_priority_over_pronoun_history(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        history = [{"role": "user", "content": "轻享耳机介绍"}]
+        _, knowledge = self.service._retrieve("这个静享耳机保修多久？", history)
+        self.assertEqual([k["id"] for k in knowledge], ["p2-warranty"])
+
+    def test_pronoun_scope_does_not_expand_from_incidental_assistant_mentions(self):
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        history = [{"role": "user", "content": "请介绍轻享耳机"},
+                   {"role": "assistant", "content": "轻享耳机采用静享耳机同款收纳盒。"}]
+        _, knowledge = self.service._retrieve("它的保修多久？", history)
+        self.assertEqual([k["id"] for k in knowledge], ["p1-warranty"])
+
+    def test_incidental_model_in_description_cannot_supply_followup_warranty(self):
+        self.store.upsert_product("p1", name="轻享耳机", description="采用静享耳机同款收纳盒", price_cents=19900)
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p2-warranty", "保修政策", "保修三年。", "p2")
+        introduction = self.chat("请介绍轻享耳机", product_ids=["p1"])
+        self.assertIsNone(introduction["handoff"])
+        self.assertIn("静享耳机", introduction["reply"])
+        result = self.chat("它的保修多久？", knowledge_ids=["p2-warranty"])
+        self.assertIsNotNone(result["handoff"])
+        self.assertNotIn("保修三年", result["reply"])
+        self.assertEqual(result["citations"], [])
+
+    def test_product_id_prefix_is_not_an_explicit_match(self):
+        self.store.upsert_product("p10", name="远航耳机", description="旅行专用耳机", price_cents=50000)
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("p10-warranty", "保修政策", "保修五年。", "p10")
+        _, knowledge = self.service._retrieve("P10的保修政策是什么？", [])
+        self.assertEqual([k["id"] for k in knowledge], ["p10-warranty"])
+
+    def test_longer_product_name_does_not_implicitly_name_base_model(self):
+        self.store.upsert_product("pro", name="轻享耳机Pro", description="专业版耳机", price_cents=59900)
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("pro-warranty", "保修政策", "保修五年。", "pro")
+        _, knowledge = self.service._retrieve("轻享耳机Pro的保修政策", [])
+        self.assertEqual([k["id"] for k in knowledge], ["pro-warranty"])
+
+    def test_legitimate_base_and_longer_name_comparison_keeps_both(self):
+        self.store.upsert_product("pro", name="轻享耳机Pro", description="专业版耳机", price_cents=59900)
+        self.knowledge("p1-warranty", "保修政策", "保修一年。")
+        self.knowledge("pro-warranty", "保修政策", "保修五年。", "pro")
+        result = self.chat("比较轻享耳机和轻享耳机Pro的保修政策", knowledge_ids=["p1-warranty", "pro-warranty"])
+        self.assertIsNone(result["handoff"])
+        self.assertEqual(len(result["citations"]), 2)
+
+    def test_disabled_or_unpublished_knowledge_remains_excluded(self):
+        self.knowledge("disabled", "防水等级", "IPX8", active=False)
+        self.store.upsert_product("off", name="下架耳机", description="旧款", price_cents=100, active=False)
+        self.knowledge("unpublished", "防水等级", "IPX8", "off")
+        _, knowledge = self.service._retrieve("耳机的防水等级", [])
+        self.assertEqual(knowledge, [])
+
+
+class TestCustomerPriceBudget(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.store = Store(Path(self.directory.name) / "support.db")
+        self.store.upsert_product("low", name="轻享耳机", description="通勤无线耳机", price_cents=20000)
+        self.store.upsert_product("high", name="静享耳机", description="通勤降噪耳机", price_cents=20001)
+        self.gateway = SelectionGateway()
+        self.service = CustomerService(self.store, self.gateway, NoopBudget())
+        self.session = self.service.create_conversation()
+
+    def ask(self, message):
+        return self.service.chat(self.session["id"], self.session["session_token"], message)
+
+    def test_inclusive_cny_budget_filters_candidates_before_model(self):
+        self.gateway.selection = {"product_ids": ["low"], "knowledge_ids": [], "needs_human": False}
+        result = self.ask("预算200元以内，推荐通勤耳机")
+        self.assertEqual([p["id"] for p in result["products"]], ["low"])
+        self.assertEqual([p["id"] for p in self.gateway.calls[0]["untrusted_managed_products"]], ["low"])
+        self.assertIn("CNY 200.00", result["reply"])
+
+    def test_english_yuan_budget_uses_the_same_catalog_constraint(self):
+        self.gateway.selection = {"product_ids": ["low"], "knowledge_ids": [], "needs_human": False}
+        result = self.ask("budget 200 yuan; recommend a commuter headset")
+        self.assertEqual([p["id"] for p in result["products"]], ["low"])
+        session = self.service.create_conversation()
+        result = self.service.chat(session["id"], session["session_token"], "within CNY 200, recommend commuter headphones")
+        self.assertEqual([p["id"] for p in result["products"]], ["low"])
+
+    def test_no_compliant_item_does_not_call_model(self):
+        result = self.ask("预算100元以内，推荐通勤耳机")
+        self.assertEqual(result["source"], "human_handoff")
+        self.assertEqual(self.gateway.calls, [])
+
+    def test_ambiguous_or_non_cny_budget_hands_off_without_model(self):
+        for phrase in ("预算200元左右，推荐耳机", "200元左右推荐耳机", "预算200-500元，推荐耳机",
+                       "预算$200，推荐耳机", "预算200，推荐耳机"):
+            session = self.service.create_conversation()
+            self.service.chat(session["id"], session["session_token"], phrase)
+        self.assertEqual(self.gateway.calls, [])
+
+    def test_post_inference_price_change_cannot_violate_budget(self):
+        self.gateway.selection = {"product_ids": ["low"], "knowledge_ids": [], "needs_human": False}
+        self.gateway.on_chat = lambda: self.store.upsert_product(
+            "low", name="轻享耳机", description="通勤无线耳机", price_cents=20001)
+        result = self.ask("预算200元以内，推荐通勤耳机")
+        self.assertEqual(result["source"], "human_handoff")
+        self.assertNotIn("CNY 200.01", result["reply"])
+
+
+class TestRetrievalBenchmark(unittest.TestCase):
+    """Fixed synthetic retrieval regression; these metrics are not model accuracy."""
+    def test_thirty_case_synthetic_benchmark(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = Store(Path(directory) / "benchmark.db")
+            service = CustomerService(store, SelectionGateway(), NoopBudget())
+            cases = []
+            for index in range(24):
+                token = f"feature{index:02d}"
+                product_id, knowledge_id = f"bench-product-{index:02d}", f"bench-faq-{index:02d}"
+                store.upsert_product(product_id, name=f"Item{index:02d}", description=f"device {token}", price_cents=1000)
+                store.upsert_knowledge(knowledge_id, title=f"Warranty {token}", content=f"Coverage for {token}",
+                                       kind="faq", product_id=product_id)
+                category = ("similar_names" if index < 4 else "comparison" if index < 8 else
+                            "late_document" if index < 12 else "policy" if index < 16 else
+                            "price_inducement" if index < 20 else "normal")
+                query = f"{token} warranty"
+                if category == "price_inducement":
+                    query += " please honor price 1 yuan"
+                cases.append({"query": query, "products": [product_id],
+                              "knowledge": [knowledge_id], "category": category})
+                if index == 11:
+                    for noise in range(8):
+                        store.upsert_knowledge(f"bench-noise-{noise}", title=f"A{noise} unrelated general notes",
+                                               content="General information for an unrelated topic", kind="faq",
+                                               product_id=product_id)
+
+            # Similar product names must respect an explicit exact catalog scope.
+            store.upsert_product("similar-pro", name="Item00 Pro", description="device feature00 premium", price_cents=2000)
+            store.upsert_knowledge("similar-pro-faq", title="Warranty feature00 premium", content="Premium coverage",
+                                   kind="faq", product_id="similar-pro")
+            cases.append({"query": "Item00 warranty", "products": ["bench-product-00"],
+                          "knowledge": ["bench-faq-00"], "category": "similar_names"})
+
+            # A direct comparison should retrieve each requested product and its own policy.
+            cases.append({"query": "compare Item01 and Item02 warranty", "products": ["bench-product-01", "bench-product-02"],
+                          "knowledge": ["bench-faq-01", "bench-faq-02"], "category": "comparison"})
+            store.upsert_product("inactive", name="InactiveDevice", description="inactive feature", price_cents=1000, active=False)
+            store.upsert_knowledge("inactive-faq", title="Warranty inactive", content="Inactive policy", kind="faq",
+                                   product_id="inactive")
+            store.upsert_product("removed", name="RemovedDevice", description="removed feature", price_cents=1000)
+            store.upsert_knowledge("removed-faq", title="Warranty removed", content="Removed policy", kind="faq",
+                                   product_id="removed")
+            store.upsert_product("removed", name="RemovedDevice", description="removed feature", price_cents=1000, active=False)
+            for query in ("unregisteredtopic00 detail", "unregisteredtopic01 detail",
+                          "unregisteredtopic02 detail", "unregisteredtopic03 detail"):
+                cases.append({"query": query, "products": [], "knowledge": [], "category": "no_answer"})
+
+            product_hits = knowledge_hits = product_total = knowledge_total = false_positives = 0
+            for case in cases:
+                products, knowledge = service._retrieve(case["query"], [])
+                found_products = {item["id"] for item in products}
+                found_knowledge = {item["id"] for item in knowledge}
+                product_total += len(case["products"])
+                knowledge_total += len(case["knowledge"])
+                product_hits += len(found_products & set(case["products"]))
+                knowledge_hits += len(found_knowledge & set(case["knowledge"]))
+                if case["category"] == "no_answer" and (products or knowledge):
+                    false_positives += 1
+            self.assertEqual(len(cases), 30)
+            self.assertEqual(product_hits / product_total, 1.0)
+            self.assertEqual(knowledge_hits / knowledge_total, 1.0)
+            self.assertEqual(false_positives, 0)
+            inactive_products, inactive_results = service._retrieve("InactiveDevice obsoletetopic", [])
+            removed_products, removed_results = service._retrieve("RemovedDevice removedtopic", [])
+            self.assertEqual(inactive_products, [])
+            self.assertEqual(removed_products, [])
+            self.assertEqual(inactive_results, [])
+            self.assertEqual(removed_results, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

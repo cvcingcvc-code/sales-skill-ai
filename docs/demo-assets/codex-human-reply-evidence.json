@@ -1,0 +1,63 @@
+{
+  "purpose": "Evidence summary for the Codex-assisted human reply demonstration",
+  "execution": {
+    "service": "real FastAPI over HTTP at 127.0.0.1:18080",
+    "database": "isolated SQLite with synthetic records",
+    "visitor_page": "/chat",
+    "model_enabled": false,
+    "model_api_calls": 0,
+    "statement": "Codex drafted replies during the task from verified synthetic product/policy data; an authorized administrator sent each reply through the existing admin handoff endpoint. The website did not call Codex or any model API."
+  },
+  "preflight_http": [
+    {"method": "GET", "path": "/admin/products", "status": 200, "records": 3},
+    {"method": "GET", "path": "/admin/knowledge", "status": 200, "records": 9},
+    {"method": "GET", "path": "/support/products", "status": 200, "records": 3},
+    {"method": "GET", "path": "/admin/model/status", "status": 200, "model_enabled": false}
+  ],
+  "scenarios": [
+    {
+      "type": "套餐推荐",
+      "visitor_question": "我是单人通勤，每月大约使用40GB国内流量和150分钟通话，应该选哪个套餐？",
+      "service_response": "DISABLED; source=human_handoff",
+      "handoff_read_http": 200,
+      "admin_resolve_http": 200,
+      "visitor_history_http": 200,
+      "visitor_received_reply": true,
+      "reply": "按你提供的用量，优先考虑「云岚通信·畅享5G 99」：月费99元（含税），含60GB国内流量和500分钟国内语音，能覆盖目前所述的40GB和150分钟。59元套餐只有20GB和100分钟，按当前用量可能产生套外费用。99元套餐余量不结转；套外国内流量为0.005元/MB，套外语音0.15元/分钟（不足一分钟按一分钟计）。以上是完全虚构的演示套餐，不能真实订购。",
+      "screenshot": "01-recommendation.png"
+    },
+    {
+      "type": "费用疑问",
+      "visitor_question": "家庭共享139有主号和两张成员卡，每月套餐内固定费用一共多少？套外流量和语音怎么收费？",
+      "service_response": "DISABLED; source=human_handoff",
+      "handoff_read_http": 200,
+      "admin_resolve_http": 200,
+      "visitor_history_http": 200,
+      "visitor_received_reply": true,
+      "reply": "按已登记的演示资费，家庭共享主套餐139元/月，两张成员卡各10元/月，合计159元/月（含税）；共享额度为100GB国内流量和1000分钟国内语音。超出后国内流量按0.005元/MB计，国内语音0.15元/分钟（不足一分钟按一分钟计），短信0.10元/条。首月收取整月费用，套餐余量月末清零。此套餐为虚构演示资料，不可真实办理。",
+      "screenshot": "02-billing.png"
+    },
+    {
+      "type": "知识库未覆盖问题",
+      "visitor_question": "云岚通信东区门店明天几点关门？我想去那里办业务。",
+      "service_response": "DISABLED; source=human_handoff",
+      "handoff_read_http": 200,
+      "admin_resolve_http": 200,
+      "visitor_history_http": 200,
+      "visitor_received_reply": true,
+      "reply": "我查到的资料没有东区门店地址或营业时间，无法确认明天的关门时间，也不应猜测。已转人工，请客服核实网点信息后答复。云岚通信及套餐都是虚构演示资料，不可据此安排真实出行。",
+      "screenshot": "03-knowledge_gap.png"
+    }
+  ],
+  "database_check": {
+    "products": 3,
+    "knowledge_records": 9,
+    "conversations": 3,
+    "messages": 9,
+    "handoffs": 3,
+    "model_usage_records": 3,
+    "model_usage_status": "BLOCKED (one record per attempted visitor question; no model response)",
+    "foreign_key_check": "no violations"
+  },
+  "credential_note": "No admin token, visitor session token, or private conversation identifier is included in this evidence file."
+}
