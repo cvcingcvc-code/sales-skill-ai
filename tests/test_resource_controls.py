@@ -142,7 +142,7 @@ class TestModelBudget(ResourceControlsCase):
         result = budget.summary(now=NOW)
         self.assertEqual(result["daily_call_limit"], 200)
         self.assertEqual(result["daily_token_limit"], 200_000)
-        self.assertEqual(result["max_input_tokens"] + result["max_output_tokens"], 20_096)
+        self.assertEqual(result["max_input_tokens"] + result["max_output_tokens"], 16_512)
         self.assertEqual(result["calls"], 0)
         self.assertNotIn(self.session["session_token"], json.dumps(result))
 
@@ -154,9 +154,9 @@ class TestModelBudget(ResourceControlsCase):
         self.assertEqual(budget.summary(now=NOW)["calls"], 1)
 
     def test_token_limit_reserves_full_request(self):
-        budget = self.budget(MODEL_DAILY_TOKEN_LIMIT=40_191)
+        budget = self.budget(MODEL_DAILY_TOKEN_LIMIT=33_023)
         reservation = self.reserve(budget)
-        self.assertEqual(reservation["reserved_tokens"], 20_096)
+        self.assertEqual(reservation["reserved_tokens"], 16_512)
         self.assert_error("budget_exceeded", self.reserve, budget)
 
     def test_zero_daily_call_or_token_limit_disables_model(self):
@@ -179,7 +179,7 @@ class TestModelBudget(ResourceControlsCase):
         reservation = self.reserve(budget)
         budget.complete(reservation, SimpleNamespace(prompt_tokens=None, completion_tokens=None), now=NOW)
         summary = budget.summary(now=NOW)
-        self.assertEqual(summary["tokens"], 20_096)
+        self.assertEqual(summary["tokens"], 16_512)
         self.assertEqual(summary["completed_calls"], 1)
         self.assertIsNone(summary["estimated_cost"])
         self.assertEqual(summary["cost_status"], "unknown")
@@ -191,7 +191,7 @@ class TestModelBudget(ResourceControlsCase):
             with self.subTest(prompt=prompt, output=output):
                 reservation = self.reserve(budget)
                 budget.complete(reservation, SimpleNamespace(prompt_tokens=prompt, completion_tokens=output), now=NOW)
-        self.assertEqual(budget.summary(now=NOW)["tokens"], 7 * 20_096)
+        self.assertEqual(budget.summary(now=NOW)["tokens"], 7 * 16_512)
 
     def test_failed_calls_count_and_keep_tokens(self):
         budget = self.budget()
@@ -199,21 +199,21 @@ class TestModelBudget(ResourceControlsCase):
         budget.complete(reservation, error_code="timeout", now=NOW)
         result = budget.summary(now=NOW)
         self.assertEqual(result["calls"], 1)
-        self.assertEqual(result["tokens"], 20_096)
+        self.assertEqual(result["tokens"], 16_512)
         self.assertEqual(result["failed_calls"], 1)
 
     def test_failed_call_does_not_trust_partial_usage(self):
         budget = self.budget()
         reservation = self.reserve(budget)
         budget.complete(reservation, SimpleNamespace(prompt_tokens=2, completion_tokens=2), error_code="timeout", now=NOW)
-        self.assertEqual(budget.summary(now=NOW)["tokens"], 20_096)
+        self.assertEqual(budget.summary(now=NOW)["tokens"], 16_512)
 
     def test_crashed_request_remains_reserved(self):
         budget = self.budget()
         self.reserve(budget)
         summary = ModelBudget(Store(self.path)).summary(now=NOW + timedelta(hours=1))
         self.assertEqual(summary["reserved_calls"], 1)
-        self.assertEqual(summary["tokens"], 20_096)
+        self.assertEqual(summary["tokens"], 16_512)
 
     def test_complete_is_idempotent_and_uses_database_reservation(self):
         budget = self.budget()
@@ -231,7 +231,7 @@ class TestModelBudget(ResourceControlsCase):
         self.reserve(budget, now=after)
         budget.complete(reservation, SimpleNamespace(prompt_tokens=8, completion_tokens=2), now=after)
         self.assertEqual(budget.summary(now=before)["tokens"], 10)
-        self.assertEqual(budget.summary(now=after)["tokens"], 20_096)
+        self.assertEqual(budget.summary(now=after)["tokens"], 16_512)
 
     def test_timezone_offset_uses_utc_day(self):
         budget = self.budget()
@@ -250,7 +250,7 @@ class TestModelBudget(ResourceControlsCase):
             results = list(pool.map(reserve, range(24)))
         self.assertEqual(results.count("reserved"), 5)
         self.assertEqual(results.count("budget_exceeded"), 19)
-        self.assertEqual(budget.summary(now=NOW)["tokens"], 5 * 20_096)
+        self.assertEqual(budget.summary(now=NOW)["tokens"], 5 * 16_512)
 
     def test_budget_is_atomic_across_processes(self):
         budget = self.budget(MODEL_DAILY_CALL_LIMIT=3)
@@ -270,7 +270,7 @@ class TestModelBudget(ResourceControlsCase):
         self.session = self.store.create_conversation()
         self.assert_error("budget_exceeded", self.reserve, budget)
         self.assertEqual(budget.summary(now=NOW)["calls"], 1)
-        self.assertEqual(budget.summary(now=NOW)["tokens"], 20_096)
+        self.assertEqual(budget.summary(now=NOW)["tokens"], 16_512)
 
     def test_missing_conversation_is_not_charged(self):
         budget = self.budget()
@@ -280,6 +280,8 @@ class TestModelBudget(ResourceControlsCase):
     def test_invalid_budget_values_fail_closed(self):
         for name, value in [("MODEL_DAILY_CALL_LIMIT", "-1"), ("MODEL_DAILY_TOKEN_LIMIT", "oops"),
                             ("MODEL_MAX_INPUT_TOKENS", "0"), ("MODEL_MAX_OUTPUT_TOKENS", "1.5"),
+                            ("SUPPORT_MODEL_MAX_OUTPUT_TOKENS", "0"),
+                            ("SUPPORT_MODEL_MAX_OUTPUT_TOKENS", "4097"),
                             ("MODEL_DAILY_COST_LIMIT", "nan"), ("MODEL_DAILY_COST_LIMIT", "1e999999999")]:
             with self.subTest(name=name, value=value), patch.dict(os.environ, {name: value}):
                 self.assert_error("configuration", self.reserve, ModelBudget(self.store))
@@ -293,7 +295,7 @@ class TestModelBudget(ResourceControlsCase):
         budget = self.budget(MODEL_DAILY_COST_LIMIT="0.025", OLLAMA_INPUT_PRICE_PER_MILLION="1",
                              OLLAMA_OUTPUT_PRICE_PER_MILLION="2")
         reservation = self.reserve(budget)
-        self.assertAlmostEqual(reservation["estimated_cost"], 0.024192)
+        self.assertAlmostEqual(reservation["estimated_cost"], 0.017024)
         self.assert_error("budget_exceeded", self.reserve, budget)
         budget.complete(reservation, SimpleNamespace(prompt_tokens=100, completion_tokens=20), now=NOW)
         self.assertAlmostEqual(budget.summary(now=NOW)["estimated_cost"], 0.00014)

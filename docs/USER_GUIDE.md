@@ -49,6 +49,7 @@
 | `MODEL_DAILY_CALL_LIMIT` | 客服模型请求每日次数上限，按 UTC 自然日；失败尝试也会占用次数 |
 | `MODEL_DAILY_TOKEN_LIMIT` | 客服每日 token 预算；调用前按输入/输出上限预留，有完整有效用量时再结算 |
 | `MODEL_MAX_INPUT_TOKENS`、`MODEL_MAX_OUTPUT_TOKENS` | 单次输入与输出边界；本地小模型建议先 `4000` / `1024` 试起 |
+| `SUPPORT_MODEL_MAX_OUTPUT_TOKENS` | 客服资料选择器专用输出上限，默认 `512`，并受 Provider 通用输出上限约束 |
 | `MODEL_DAILY_COST_LIMIT` | 可选的每日估算金额上限；启用时必须配置对应 Provider 有效输入/输出单价 |
 | `OLLAMA_INPUT_PRICE_PER_MILLION`、`OLLAMA_OUTPUT_PRICE_PER_MILLION` | 可选本地计价口径，不自动假定为零，也不代表设备实际成本 |
 
