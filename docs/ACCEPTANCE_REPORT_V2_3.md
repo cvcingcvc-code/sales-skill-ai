@@ -20,6 +20,7 @@
 | `test_resource_controls.py` 严格回归 | PASS，33 项：调用、token、失败预留、金额及 UTC 边界 |
 | `test_model_gateway.py` 严格回归 | PASS，33 项 |
 | `.venv/bin/python scripts/run_tests.py --quiet --strict --report-json /tmp/sales-v2.3-tests.json` | PASS，416 项，失败/错误/跳过/预期失败均为 0，网络连接尝试 0 |
+| GitHub Actions 离线回归（功能提交 `38539025d8dc5ae5f032994d6ae4be24b046ddd0`） | PASS，运行 [39355654570](https://github.com/cvcingcvc-code/sales-skill-ai/actions/runs/39355654570) |
 | 原销售训练/评分回归文件差异检查 | PASS，原有 `test_llm_client.py`、`test_memory.py`、`test_roleplay.py`、`test_scorer.py` 未修改；全量套件包含其回归 |
 
 安全摘要位于仓库外 `/tmp/sales-v2.3-tests.json`。测试是隔离 Mock 与合成数据；本阶段没有发出真实模型请求，结果不代表 Ollama/DeepSeek 可用或客服真实效果已验证。模型维持关闭。
@@ -28,4 +29,4 @@
 
 - 路线 1 至 3 已完成。下一步是在硬件和模型版本确定后评估 JSON schema 与真实 Ollama 行为；用户设备仍未确定，本轮不安装或下载模型。
 - 超大“核心候选”无法打包时采用保守转人工；系统不静默删掉最高排序证据后继续猜测。
-- 推送与同提交 GitHub Actions 结果将在同步后补记；本地测试通过不能代替远端 CI。
+- 当前分支已推送到 GitHub，功能提交与验收文档提交均在远端；该功能提交的 GitHub Actions 离线回归通过。验收文档的本次补记会随独立提交同步。
