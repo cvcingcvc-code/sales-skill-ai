@@ -58,3 +58,11 @@
 | 后续推理验收 | **BLOCKED / NOT_RUN**：`/api/tags`、`/api/chat` 成功响应及三项真实客服咨询均未执行。 |
 
 处理：按要求在安装/下载前停止。本次没有修改任何云环境网络策略或权限。总体状态保持 **BLOCKED**；解除阻断需要云环境授权 Ollama 官方源并提供可安装/运行 Ollama 的权限，然后重新检查条件。
+
+## 2026-10-20 有边界解阻测试复查
+
+分支 `codex/v0.2-ollama-validation` 当前 HEAD 为 `e9d458412fa0e2cb9406ef117121769613b08643`，`demo-v0.1` 基线仍为 `0b7dd4da663c47baeb6adbb64f3f203676af4c18`。本次前置检查：Linux x86_64、5 vCPU、内存总量 34,906,016 kB / 可用 33,899,904 kB、Swap 0；模型默认目录 `/home/agent/.ollama/models` 尚不存在，所在卷剩余约 30 GB，`/tmp` 剩余约 17 GB。
+
+停止条件命中：运行时网络模式为 restricted，当前策略未允许 `ollama.com` 与 `registry.ollama.ai`，且运行时策略执行状态为 `unknown`；当前 UID 为 1000，`sudo` 不可用且 `/usr/local/bin` 不可写。虽存储空间足够，但不能确认官方源出网，也没有安装权限。按请求立即停止，没有联网探测官方源、安装 Ollama、下载模型、启动服务或修改代码。
+
+本次结论：安装/推理 **BLOCKED**；`qwen3:4b-instruct` 与备选 `qwen3:1.7b` 均未尝试；真实 `/api/tags`、`/api/chat` 及三项 Gateway/客服咨询均 **NOT_RUN**。总体验收仍为 **BLOCKED**。
