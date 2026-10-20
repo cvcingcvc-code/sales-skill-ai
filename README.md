@@ -48,7 +48,7 @@
 2. 克隆项目并进入目录：
 
 ```powershell
-git clone https://github.com/cvcingcvc-code/sales-skill-ai.git
+git clone --branch codex/s2-windows-first-run --single-branch https://github.com/cvcingcvc-code/sales-skill-ai.git
 cd sales-skill-ai
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock

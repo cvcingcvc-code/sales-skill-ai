@@ -1,0 +1,171 @@
+name: Windows first run
+
+on:
+  push:
+    branches: [codex/s2-windows-first-run]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-first-run-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-install-and-smoke:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      MODEL_ENABLED: "false"
+      LLM_PROVIDER: ollama
+      # A non-empty disabled placeholder keeps static status DISABLED; no Ollama is contacted.
+      OLLAMA_MODEL: windows-no-model-call
+      ADMIN_API_TOKEN: windows-runner-test-only-not-a-secret
+      SUPPORT_API_URL: http://127.0.0.1:8080
+      DB_PATH: ${{ runner.temp }}\sales-training-windows.sqlite3
+      SUPPORT_DB_PATH: ${{ runner.temp }}\sales-support-windows.sqlite3
+      SUPPORT_CREATE_LIMIT_PER_HOUR: "50"
+      SUPPORT_MESSAGE_LIMIT_PER_MINUTE: "50"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.lock
+
+      - name: Install locked dependencies
+        run: |
+          python -m pip install -r requirements.lock
+          python -m pip check
+
+      - name: Start services and verify clean Windows installation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $apiLog = Join-Path $env:RUNNER_TEMP 'sales-api-windows.log'
+          $apiError = Join-Path $env:RUNNER_TEMP 'sales-api-windows.err.log'
+          $uiLog = Join-Path $env:RUNNER_TEMP 'sales-streamlit-windows.log'
+          $uiError = Join-Path $env:RUNNER_TEMP 'sales-streamlit-windows.err.log'
+          $evidencePath = Join-Path $env:RUNNER_TEMP 'windows-first-run-evidence.json'
+          $api = $null
+          $ui = $null
+
+          function Wait-ForEndpoint([string]$Url, [System.Diagnostics.Process]$Process, [string]$LogPath, [string]$ErrorPath) {
+            for ($attempt = 0; $attempt -lt 40; $attempt++) {
+              if ($Process.HasExited) {
+                if (Test-Path $LogPath) { Get-Content $LogPath -Tail 80 }
+                if (Test-Path $ErrorPath) { Get-Content $ErrorPath -Tail 80 }
+                throw "Service exited before becoming ready: $Url"
+              }
+              try { return Invoke-WebRequest -Uri $Url -TimeoutSec 3 -UseBasicParsing }
+              catch { Start-Sleep -Seconds 2 }
+            }
+            if (Test-Path $LogPath) { Get-Content $LogPath -Tail 80 }
+            if (Test-Path $ErrorPath) { Get-Content $ErrorPath -Tail 80 }
+            throw "Timed out waiting for $Url"
+          }
+
+          try {
+            $python = (Get-Command python).Source
+            $pythonVersion = (& $python --version 2>&1).ToString()
+            if ($pythonVersion -notmatch '^Python 3\.12\.') { throw "Expected Python 3.12, got $pythonVersion" }
+
+            $api = Start-Process -FilePath $python -WorkingDirectory $env:GITHUB_WORKSPACE -PassThru `
+              -ArgumentList @('-m', 'uvicorn', 'agent_skill.api_server:app', '--host', '127.0.0.1', '--port', '8080', '--workers', '1', '--no-access-log') `
+              -RedirectStandardOutput $apiLog -RedirectStandardError $apiError
+            $ui = Start-Process -FilePath $python -WorkingDirectory $env:GITHUB_WORKSPACE -PassThru `
+              -ArgumentList @('-m', 'streamlit', 'run', 'demo/app.py', '--server.address', '127.0.0.1', '--server.port', '8501', '--server.headless', 'true') `
+              -RedirectStandardOutput $uiLog -RedirectStandardError $uiError
+
+            $health = Wait-ForEndpoint 'http://127.0.0.1:8080/skill/health' $api $apiLog $apiError
+            if ($health.StatusCode -ne 200) { throw "FastAPI health returned $($health.StatusCode)" }
+            $visitorPage = Wait-ForEndpoint 'http://127.0.0.1:8080/chat' $api $apiLog $apiError
+            if ($visitorPage.StatusCode -ne 200) { throw "Visitor page returned $($visitorPage.StatusCode)" }
+            $streamlitHealth = Wait-ForEndpoint 'http://127.0.0.1:8501/_stcore/health' $ui $uiLog $uiError
+            if ($streamlitHealth.StatusCode -ne 200 -or $streamlitHealth.Content.Trim() -ne 'ok') { throw 'Streamlit health check failed' }
+            $adminPage = Invoke-WebRequest -Uri 'http://127.0.0.1:8501/' -TimeoutSec 10 -UseBasicParsing
+            if ($adminPage.StatusCode -ne 200) { throw "Admin page returned $($adminPage.StatusCode)" }
+
+            $unauthorized = Invoke-WebRequest -Uri 'http://127.0.0.1:8080/admin/products' -SkipHttpErrorCheck -UseBasicParsing
+            if ($unauthorized.StatusCode -ne 401) { throw "Unauthenticated admin request should be 401, got $($unauthorized.StatusCode)" }
+            $headers = @{ Authorization = "Bearer $env:ADMIN_API_TOKEN" }
+            $modelStatus = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/admin/model/status' -Headers $headers
+            if ($modelStatus.status -ne 'DISABLED') { throw "Model should be disabled, got $($modelStatus.status)" }
+
+            $product = @{
+              id = 'windows-first-run-probe'
+              name = 'Windows 首次启动验收商品'
+              description = '仅用于隔离安装验收，不是真实商品。'
+              price_cents = 1234
+              currency = 'CNY'
+              url = 'https://example.invalid/windows-first-run-probe'
+              active = $true
+            } | ConvertTo-Json -Compress
+            $savedProduct = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8080/admin/products' -Headers $headers -ContentType 'application/json' -Body $product
+            if ($savedProduct.id -ne 'windows-first-run-probe') { throw 'Admin product creation did not return the expected product' }
+            $adminProducts = @(Invoke-RestMethod -Uri 'http://127.0.0.1:8080/admin/products' -Headers $headers)
+            $publicProducts = @(Invoke-RestMethod -Uri 'http://127.0.0.1:8080/support/products')
+            if (-not ($adminProducts | Where-Object { $_.id -eq 'windows-first-run-probe' })) { throw 'Created product missing from authorized admin list' }
+            if (-not ($publicProducts | Where-Object { $_.id -eq 'windows-first-run-probe' })) { throw 'Created product missing from visitor catalog' }
+
+            $conversation = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8080/support/conversations' -ContentType 'application/json' -Body '{}'
+            $message = @{ message = 'Windows 首次启动验收商品的价格和资料是什么？' } | ConvertTo-Json -Compress
+            $visitorHeaders = @{ 'X-Session-Token' = $conversation.session_token }
+            $reply = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8080/support/conversations/$($conversation.id)/messages" -Headers $visitorHeaders -ContentType 'application/json' -Body $message
+            if ($reply.model_status -ne 'DISABLED') { throw "Expected model_status DISABLED, got $($reply.model_status)" }
+            if ($reply.source -ne 'human_handoff' -or $reply.handoff.status -ne 'pending') { throw 'Disabled-model question did not enter the human handoff queue' }
+            $pending = @(Invoke-RestMethod -Uri 'http://127.0.0.1:8080/admin/handoffs?status=pending' -Headers $headers)
+            if (-not ($pending | Where-Object { $_.id -eq $reply.handoff.id -and $_.conversation_id -eq $conversation.id })) { throw 'Admin cannot read the pending handoff' }
+
+            $evidence = [ordered]@{
+              runner = 'windows-2022'
+              python = $pythonVersion
+              installation = 'requirements.lock; pip check passed'
+              isolation = 'RUNNER_TEMP SQLite paths for training and support'
+              fastapi_health_http = $health.StatusCode
+              visitor_chat_http = $visitorPage.StatusCode
+              streamlit_health = $streamlitHealth.Content.Trim()
+              streamlit_admin_page_http = $adminPage.StatusCode
+              unauthenticated_admin_http = $unauthorized.StatusCode
+              authorized_admin_model_status_http = 200
+              authorized_admin_model_state = $modelStatus.status
+              created_product_id = $savedProduct.id
+              admin_product_count = $adminProducts.Count
+              visitor_catalog_count = $publicProducts.Count
+              visitor_reply_model_status = $reply.model_status
+              visitor_reply_source = $reply.source
+              pending_handoff_visible_to_admin = $true
+              model_api_requests = 0
+            }
+            $evidence | ConvertTo-Json -Depth 5 | Set-Content -Path $evidencePath -Encoding utf8
+            Write-Host 'PASS: Python 3.12 dependencies installed and checked on Windows 2022.'
+            Write-Host 'PASS: FastAPI health, visitor /chat, Streamlit health and admin page returned HTTP 200.'
+            Write-Host 'PASS: Unauthenticated admin access returned 401; authorized product create/read succeeded.'
+            Write-Host 'PASS: Visitor product read succeeded; disabled model returned DISABLED and created an admin-visible handoff.'
+            Write-Host "Evidence written to runner temp (contains no tokens): $evidencePath"
+          }
+          finally {
+            if ($ui -and -not $ui.HasExited) { Stop-Process -Id $ui.Id -Force }
+            if ($api -and -not $api.HasExited) { Stop-Process -Id $api.Id -Force }
+          }
+
+      - name: Upload Windows startup evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-first-run-evidence
+          path: |
+            ${{ runner.temp }}\windows-first-run-evidence.json
+            ${{ runner.temp }}\sales-api-windows.log
+            ${{ runner.temp }}\sales-api-windows.err.log
+            ${{ runner.temp }}\sales-streamlit-windows.log
+            ${{ runner.temp }}\sales-streamlit-windows.err.log
+          if-no-files-found: warn
+          retention-days: 14
