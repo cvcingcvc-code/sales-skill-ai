@@ -397,8 +397,11 @@ class CustomerService:
             pids, kids = parsed.get("product_ids"), parsed.get("knowledge_ids")
             if not isinstance(pids, list) or not isinstance(kids, list) or not all(isinstance(i, str) for i in pids + kids):
                 raise ValueError("invalid ids")
-            valid_products = {p["id"]: p for p in products}
-            valid_knowledge = {k["id"]: k for k in citations}
+            # Validate selections against the exact evidence packed for this
+            # request. Preflight may have removed lower-ranked candidates to
+            # fit the context; those IDs are no longer eligible for selection.
+            valid_products = {p["id"]: p for p in data["untrusted_managed_products"]}
+            valid_knowledge = {k["id"]: k for k in data["untrusted_managed_knowledge"]}
             if len(pids) > 6 or len(kids) > 8 or not set(pids) <= set(valid_products) or not set(kids) <= set(valid_knowledge):
                 raise ValueError("untrusted reference")
             status = "MOCK" if result.provider == "mock" else "OK"
