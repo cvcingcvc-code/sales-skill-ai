@@ -5,7 +5,7 @@ comes from server environment variables; user messages cannot override it.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import json
 import math
 import os
@@ -511,6 +511,8 @@ class ClaudeProvider(ModelProvider):
 class ModelGateway:
     """One explicitly selected provider. Configuration presence does not prove readiness."""
 
+    supports_request_output_limit = True
+
     def __init__(self, provider=None, *, transport=None, config=None):
         self.config = config or ModelConfig.from_env(provider)
         providers = {"deepseek": DeepSeekProvider, "ollama": OllamaProvider, "gemini": GeminiProvider, "claude": ClaudeProvider}
@@ -519,10 +521,15 @@ class ModelGateway:
         self.last_result = None
         self.last_error = None
 
-    def _request_provider(self):
+    def _request_provider(self, max_output_tokens=None):
         # Adapter completion/stream metadata belongs to one request. The public
         # provider remains a configuration template, never shared inference state.
-        return type(self.provider)(self.config, transport=self.provider.transport)
+        config = self.config
+        if max_output_tokens is not None:
+            if type(max_output_tokens) is not int or max_output_tokens <= 0:
+                raise ModelError("configuration")
+            config = replace(config, max_output_tokens=min(config.max_output_tokens, max_output_tokens))
+        return type(self.provider)(config, transport=self.provider.transport)
 
     def validate_request(self, messages, system="", model=None) -> int:
         """Preflight without inference, budget reservation, or health mutation.
@@ -532,10 +539,10 @@ class ModelGateway:
         """
         return self._request_provider().validate_request(messages, system, model)
 
-    def chat(self, messages, system="", model=None) -> ModelResult:
+    def chat(self, messages, system="", model=None, max_output_tokens=None) -> ModelResult:
         try:
             self.provider._check()
-            result = self._request_provider().chat(messages, system, model)
+            result = self._request_provider(max_output_tokens).chat(messages, system, model)
             self.last_result = result
             self.last_error = None
             return result

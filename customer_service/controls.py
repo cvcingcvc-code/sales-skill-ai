@@ -156,11 +156,17 @@ class ModelBudget:
 
     @staticmethod
     def _settings():
+        provider_output = _integer_setting("MODEL_MAX_OUTPUT_TOKENS", 4096, 1)
+        support_output = _integer_setting("SUPPORT_MODEL_MAX_OUTPUT_TOKENS", 512, 1)
+        if support_output > 4096:
+            raise _configuration_error()
         settings = {
             "daily_call_limit": _integer_setting("MODEL_DAILY_CALL_LIMIT", 200),
             "daily_token_limit": _integer_setting("MODEL_DAILY_TOKEN_LIMIT", 200_000),
             "max_input_tokens": _integer_setting("MODEL_MAX_INPUT_TOKENS", 16_000, 1),
-            "max_output_tokens": _integer_setting("MODEL_MAX_OUTPUT_TOKENS", 4096, 1),
+            # Customer service reserves the same output ceiling passed to its
+            # selector provider, never the larger training/provider ceiling.
+            "max_output_tokens": min(provider_output, support_output),
         }
         if settings["max_input_tokens"] + settings["max_output_tokens"] > _MAX_SQLITE_INTEGER:
             raise _configuration_error()
