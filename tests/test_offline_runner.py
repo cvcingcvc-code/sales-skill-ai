@@ -8,6 +8,7 @@ from pathlib import Path
 import tempfile
 import textwrap
 import unittest
+from argparse import Namespace
 from unittest.mock import patch
 
 from scripts import run_tests
@@ -20,6 +21,19 @@ class OfflineRunnerTests(unittest.TestCase):
         self.root = Path(self.directory.name)
         self.report_path = self.root / "report.json"
         self.sequence = 0
+
+    def test_focused_groups_expand_to_known_test_modules_without_duplicates(self):
+        patterns = run_tests._patterns(Namespace(group=["support", "models"], pattern="test_*.py"))
+
+        self.assertIn("test_customer_service.py", patterns)
+        self.assertIn("test_model_gateway.py", patterns)
+        self.assertEqual(len(patterns), len(set(patterns)))
+        self.assertEqual(run_tests._patterns(Namespace(group=None, pattern="test_selected_*.py")),
+                         ("test_selected_*.py",))
+
+    def test_group_rejects_a_custom_pattern(self):
+        with self.assertRaises(ValueError):
+            run_tests._patterns(Namespace(group=["support"], pattern="test_selected_*.py"))
 
     def run_fixture(self, body="", *, arguments=(), report_path=None, write_report=True):
         self.sequence += 1

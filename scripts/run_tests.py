@@ -15,6 +15,31 @@ import unittest
 from unittest.mock import patch
 
 
+TEST_GROUPS = {
+    "support": (
+        "test_customer_service.py", "test_support_api.py", "test_retrieval_quality.py",
+        "test_preflight_budget.py", "test_data_lifecycle.py", "test_resource_controls.py",
+    ),
+    "training": (
+        "test_roleplay.py", "test_scorer.py", "test_score_scales.py",
+        "test_training_api.py", "test_training_regressions.py", "test_workflow_v2.py",
+    ),
+    "models": (
+        "test_llm_client.py", "test_model_gateway.py", "test_model_offline.py",
+        "test_model_preflight.py", "test_preflight_budget.py", "test_resource_controls.py",
+    ),
+    "ui": ("test_demo_v2.py", "test_streamlit_regressions.py", "test_workbench_v2.py"),
+}
+
+
+def _patterns(args):
+    if args.group:
+        if args.pattern != "test_*.py":
+            raise ValueError("--group and a custom --pattern cannot be used together")
+        return tuple(dict.fromkeys(pattern for group in args.group for pattern in TEST_GROUPS[group]))
+    return (args.pattern,)
+
+
 def _write_report(path, report):
     """Replace a complete report atomically without exposing partial JSON."""
     temporary = None
@@ -34,6 +59,8 @@ def _write_report(path, report):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pattern", default="test_*.py")
+    parser.add_argument("--group", choices=tuple(TEST_GROUPS), action="append",
+                        help="Run a focused module group; repeat to combine groups.")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--fail-on-skip", action="store_true",
                         help="Fail when any test is skipped; preserves expected-failure semantics.")
@@ -42,6 +69,10 @@ def main(argv=None):
     parser.add_argument("--report-json", type=Path,
                         help="Write fixed offline status and counts, without test or environment details.")
     args = parser.parse_args(argv)
+    try:
+        patterns = _patterns(args)
+    except ValueError as error:
+        parser.error(str(error))
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
     blocked_attempts = []
@@ -70,8 +101,11 @@ def main(argv=None):
         with patch.dict(os.environ, safe_configuration), \
                 patch("socket.create_connection", side_effect=deny_network), \
                 patch("socket.socket.connect", side_effect=deny_network):
-            suite = unittest.defaultTestLoader.discover(str(root / "tests"), pattern=args.pattern,
-                                                        top_level_dir=str(root))
+            suite = unittest.TestSuite(
+                unittest.defaultTestLoader.discover(str(root / "tests"), pattern=pattern,
+                                                    top_level_dir=str(root))
+                for pattern in patterns
+            )
             result = unittest.TextTestRunner(verbosity=1 if args.quiet else 2).run(suite)
     print(f"Offline network guard: {len(blocked_attempts)} connection attempts; no live model validation.")
     fail_on_skip = args.fail_on_skip or args.strict

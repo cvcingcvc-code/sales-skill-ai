@@ -1,8 +1,8 @@
 # 开发、验证与 GitHub 同步
 
-本仓库沿用当前隔离云任务的已有 checkout，不额外创建 Git worktree。保留用户既有改动，先检查工作区、当前分支、HEAD 和远端；本轮在 `codex/workbench-quality-v2.1` 开发，目标仓库为 `cvcingcvc-code/sales-skill-ai`。
+沿用当前隔离 checkout，不额外创建 Git worktree。保留用户既有改动，先检查工作区、当前分支、HEAD 和远端；不要在文档中假定开发分支名称。
 
-用户已明确授权“推进后自动同步 GitHub”。在本轮优化范围内，每个独立阶段完成并通过相关测试后，继续完成明确暂存、提交和推送，不再重复询问同一许可。范围包括资料排序/关联约束、预算前无网络校验、离线回归/CI 及对应测试和文档；后续新增业务功能仍按任务范围处理。
+只有当前任务明确要求同步 GitHub 时，才在阶段测试通过后提交并推送当前开发分支；不合并主分支或覆盖其他分支。
 
 ## 本地开发前提
 
@@ -30,11 +30,35 @@
 .venv/bin/python scripts/run_tests.py --pattern test_preflight_budget.py --quiet --strict
 ```
 
+也可以用测试组快捷筛选，避免逐个记测试文件名：
+
+```bash
+# 客服 API、知识检索、生命周期和资源控制
+.venv/bin/python scripts/run_tests.py --group support --quiet --strict
+# 销售训练和评分
+.venv/bin/python scripts/run_tests.py --group training --quiet --strict
+# Provider/Gateway 合约；全部是离线测试，不会调用真实模型
+.venv/bin/python scripts/run_tests.py --group models --quiet --strict
+# 管理端与访客页面回归
+.venv/bin/python scripts/run_tests.py --group ui --quiet --strict
+# 同时验证多个相关组，重复模块会自动去重
+.venv/bin/python scripts/run_tests.py --group support --group models --quiet --strict
+```
+
+首次启动前的静态配置检查单独运行：
+
+```bash
+.venv/bin/python scripts/check_local_setup.py --json
+```
+
+Windows PowerShell 将 `.venv/bin/python` 替换为 `\.venv\Scripts\python.exe`。配置预检不连接模型；所有测试组都运行隔离的 Mock/规则回归，不等同真机或真实模型验收。
+
 runner 使用临时数据库、固定测试配置和禁止 socket 外连的防护；不读取真实客户库作为测试样本。直接 unittest 可能继承 `.env` 中的暂停开关而改变旧 Mock 测试前提，因此优先使用上述入口。根目录 `test_gemini.py` 是历史手工联网脚本，不属于离线回归集，不盲跑它或把它当作真实验收通过。
 
 | 参数/行为 | 合约 |
 | --- | --- |
 | `--pattern` | 控制 `tests/` 的 unittest 文件发现模式；没有匹配测试仍为失败 |
+| `--group` | 运行客服、训练、模型合约或 UI 相关测试组；可以重复指定组合组，不可与自定义 `--pattern` 混用 |
 | `--quiet` | 减少常规输出，不改变测试判定 |
 | `--fail-on-skip` | 保留的可选跳过检查，只因跳过项失败，不改变预期失败的默认语义 |
 | `--strict` | 交付与 CI 门槛；跳过项和预期失败均返回失败，不允许用标记掩盖未通过项 |
