@@ -470,19 +470,20 @@ class Store:
 
     def usage_summary(self):
         with self.connection() as conn:
+            # Keep the aggregate and recent-call list on one SQLite snapshot so
+            # the admin page cannot combine statistics from different writes.
+            conn.execute("BEGIN")
             row = conn.execute("""SELECT COUNT(*) AS calls,
                 COALESCE(SUM(prompt_tokens),0) AS prompt_tokens,
                 COALESCE(SUM(completion_tokens),0) AS completion_tokens,
                 SUM(estimated_cost) AS estimated_cost,
-                SUM(CASE WHEN estimated_cost IS NULL THEN 1 ELSE 0 END) AS unknown_cost_calls
+                SUM(CASE WHEN estimated_cost IS NULL THEN 1 ELSE 0 END) AS unknown_cost_calls,
+                SUM(CASE WHEN status='BLOCKED' THEN 1 ELSE 0 END) AS blocked_calls
                 FROM model_usage""").fetchone()
             recent = [dict(r) for r in conn.execute("SELECT provider,model,status,prompt_tokens,completion_tokens,estimated_cost,created_at FROM model_usage ORDER BY id DESC LIMIT 30")]
-        with self.connection() as conn:
-            blocked = conn.execute("SELECT COUNT(*) FROM model_usage WHERE status='BLOCKED'").fetchone()[0]
         summary = dict(row)
         summary["known_estimated_cost"] = summary["estimated_cost"]
         if summary["unknown_cost_calls"]:
             summary["estimated_cost"] = None
-        return {**summary, "total_calls": row["calls"], "blocked_calls": blocked,
-                "failed_calls": blocked, "currency": "configured",
+        return {**summary, "total_calls": row["calls"], "failed_calls": row["blocked_calls"], "currency": "configured",
                 "cost_note": "按管理员配置的同一币种单价估算，非实际账单；含未知成本时总估算为 null", "recent": recent}

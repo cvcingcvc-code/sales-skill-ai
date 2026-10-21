@@ -281,6 +281,18 @@ class TestCustomerServiceScenarios(unittest.TestCase):
         self.assertEqual(usage["blocked_calls"], 1)
         self.assertIsNone(usage["estimated_cost"])
 
+    def test_usage_summary_aggregates_blocked_calls_with_total(self):
+        self.store.record_usage(self.session["id"], "mock", "offline", "MOCK", 2, 1, 0.01)
+        self.store.record_usage(self.session["id"], "ollama", "offline", "BLOCKED")
+
+        usage = self.store.usage_summary()
+
+        self.assertEqual(usage["total_calls"], 2)
+        self.assertEqual(usage["blocked_calls"], 1)
+        self.assertEqual(usage["failed_calls"], 1)
+        self.assertEqual(usage["prompt_tokens"], 2)
+        self.assertEqual([call["status"] for call in usage["recent"]], ["BLOCKED", "MOCK"])
+
     def test_40_product_deactivation_during_inference_blocks_reply(self):
         self.gateway.on_chat = lambda: self.store.upsert_product("p1", name="轻享耳机", description="已下架", price_cents=19900, active=False)
         self.assert_handoff("轻享耳机多少钱？", "catalog_changed")
