@@ -54,6 +54,24 @@ class DataLifecycleTests(unittest.TestCase):
                 self.assertIsNotNone(datetime.fromisoformat(result[key]).tzinfo)
             self.assertNotIn("token_hash", result)
 
+    def test_catalog_conversation_messages_and_handoff_survive_store_reopen(self):
+        product = self.store.upsert_product(
+            id="restart-demo-item", name="合成验收商品",
+            description="仅用于验证 SQLite 文件重开后的记录持久化。", price_cents=499)
+        knowledge = self.store.upsert_knowledge(
+            id="restart-demo-faq", title="合成配送 FAQ",
+            content="配送时间由人工确认。", kind="faq", product_id=product["id"])
+        self.store.add_message(self.cid, "user", "什么时候能收到？", "customer")
+        handoff = self.store.create_handoff(self.cid, "knowledge_gap")
+        self.store.resolve_handoff(handoff["id"], "此为合成验收人工回复。")
+
+        reopened = Store(self.path)
+        conversation = reopened.admin_get_conversation(self.cid)
+        self.assertEqual(reopened.get_product(product["id"])["price_cents"], 499)
+        self.assertEqual(reopened.list_knowledge()[0]["id"], knowledge["id"])
+        self.assertEqual([message["role"] for message in conversation["messages"]], ["user", "human"])
+        self.assertEqual(conversation["handoffs"][0]["status"], "resolved")
+
     def test_every_message_writer_refreshes_last_activity(self):
         old = "2000-01-01T00:00:00+00:00"
         self.set_age(self.cid, old)
