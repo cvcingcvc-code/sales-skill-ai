@@ -49,7 +49,7 @@
 2. 克隆项目并进入目录：
 
 ```powershell
-git clone --branch codex/s2-windows-first-run --single-branch https://github.com/cvcingcvc-code/sales-skill-ai.git
+git clone https://github.com/cvcingcvc-code/sales-skill-ai.git
 cd sales-skill-ai
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock
@@ -128,3 +128,7 @@ macOS/Linux 命令、设备要求和报告状态详见[本地模型部署与验�
 - [管理员、访客和会话操作手册](docs/USER_GUIDE.md)
 - [MVP 演示流程、截图和 Codex 辅助回复证据](docs/MVP_DEMO_PACKAGE.md)
 - [架构说明](docs/ARCHITECTURE.md)
+
+## License
+
+代码采用 [MIT License](LICENSE)。仓库中的第三方素材、模型与商标不在此授权范围内。
