@@ -72,6 +72,12 @@ class DataLifecycleTests(unittest.TestCase):
         self.assertEqual([message["role"] for message in conversation["messages"]], ["user", "human"])
         self.assertEqual(conversation["handoffs"][0]["status"], "resolved")
 
+    def test_database_journal_mode_persists_and_foreign_keys_are_enabled_per_connection(self):
+        for _ in range(2):
+            with self.store.connection() as conn:
+                self.assertEqual(conn.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
+                self.assertEqual(conn.execute("PRAGMA foreign_keys").fetchone()[0], 1)
+
     def test_every_message_writer_refreshes_last_activity(self):
         old = "2000-01-01T00:00:00+00:00"
         self.set_age(self.cid, old)

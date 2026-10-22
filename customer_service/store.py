@@ -6,7 +6,7 @@ import math
 import os
 import secrets
 import sqlite3
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -37,6 +37,10 @@ class Store:
     def __init__(self, db_path=None):
         self.db_path = str(db_path or os.getenv("SUPPORT_DB_PATH", "./data/db/support.db"))
         os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+        # WAL is persistent per database file; configure it once at Store
+        # startup instead of repeating a journal-mode check for every query.
+        with closing(sqlite3.connect(self.db_path, timeout=10)) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
         with self.connection() as conn:
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS products (
@@ -132,10 +136,9 @@ class Store:
     @contextmanager
     def connection(self):
         conn = sqlite3.connect(self.db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA journal_mode=WAL")
         try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
             with conn:
                 yield conn
         finally:
