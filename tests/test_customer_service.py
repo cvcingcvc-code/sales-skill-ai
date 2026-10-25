@@ -376,10 +376,10 @@ class TestCustomerServiceScenarios(unittest.TestCase):
     def test_54_handoff_between_status_check_and_save_is_atomic(self):
         original = self.store.add_ai_message_if_active
 
-        def concurrent_handoff(cid, content, source, expected_epoch=None):
+        def concurrent_handoff(cid, content, source, expected_epoch=None, **kwargs):
             another_worker = Store(self.store.db_path)
             another_worker.create_handoff(cid, "concurrent_agent")
-            return original(cid, content, source, expected_epoch=expected_epoch)
+            return original(cid, content, source, expected_epoch=expected_epoch, **kwargs)
 
         self.store.add_ai_message_if_active = concurrent_handoff
         result = self.chat("轻享耳机多少钱？")

@@ -321,6 +321,25 @@ def _conversation_history(api: SupportAPI, authorized: bool):
             st.write("需求摘要：", conversation.get("need_summary", ""))
             for message in _rows(conversation.get("messages", [])):
                 st.write(f"{message.get('role', '')}：", message.get("content", ""))
+                st.caption(f"来源：{message.get('source', '未知')} · 时间：{message.get('created_at', '未知')}")
+                evidence = message.get("evidence")
+                if isinstance(evidence, dict):
+                    with st.expander(f"答复依据 · 消息 {message.get('id', '')}"):
+                        st.caption("这是答复当时选中的资料，供历史核查；不代表当前价格或现行政策。")
+                        if message.get("source") == "mock_selection":
+                            st.warning("MOCK：离线测试资料选择，不是真实模型验收。")
+                        for product in _rows(evidence.get("products", [])):
+                            st.text(f"商品：{product.get('name', '')}（{product.get('id', '')}）")
+                            _table([product], ("price_cents", "currency", "url", "active", "updated_at"))
+                            st.caption("price_cents 的单位为人民币分；例如 1299 表示 12.99 元。")
+                            st.text(product.get("description", ""))
+                        for citation in _rows(evidence.get("citations", [])):
+                            st.text(f"知识：{citation.get('title', '')}（{citation.get('id', '')}）")
+                            _table([citation], ("kind", "product_id", "product_name", "active", "updated_at",
+                                                "review_status", "reviewed_at"))
+                            st.text(citation.get("content", ""))
+                elif message.get("source") in ("managed_catalog", "mock_selection"):
+                    st.caption("此历史答复未保存资料快照，不能根据当前资料反推原答复依据。")
             handoffs = _call(api, "GET", "/admin/handoffs", admin=True)
             pending_known = isinstance(handoffs, (list, dict))
             pending = [row for row in _rows(handoffs, "handoffs")

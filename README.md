@@ -17,6 +17,7 @@
 - 原销售训练工作台与评分流程仍在仓库中；规则评分需与真实模型评分区分。
 - Streamlit 管理端可维护商品、FAQ、商品文档和售后政策，并处理会话与人工接管。
 - 知识保存后先待审核；管理员核对已保存版本并确认后才可参与客服检索。正文、标题、类型或关联商品修改后须重新审核，启用开关单独控制是否使用。
+- 通过资料选择器生成的新答复会保存当时选中资料的快照，管理员可在“客户会话”查看；之后改价、改政策不会覆盖历史依据。旧答复不补造快照，Mock 仍明确标记，详见[历史依据查看说明](docs/USER_GUIDE.md#查看历史答复依据)。
 - FastAPI 提供访客文字会话、商品查询、同意后留资、人工回复及会话数据管理；SQLite 用于本地持久化。
 - 代码包含 Ollama 与 DeepSeek Provider 配置路径，但配置存在不代表模型可连通或答复通过验收。
 - 已完成使用虚构通信套餐的真实 HTTP、浏览器和隔离 SQLite 演示；模型关闭，回复通过人工接管发送。
@@ -27,6 +28,8 @@
 - [访客咨询与人工回复：套餐推荐](docs/demo-assets/01-recommendation.png)
 - [访客咨询与人工回复：资费问题](docs/demo-assets/02-billing.png)
 - [访客咨询与人工回复：知识不足转人工](docs/demo-assets/03-knowledge_gap.png)
+- [历史答复依据：离线夹具展示，非真实模型](docs/demo-assets/04-answer-evidence-mock.png)
+- [模型关闭时的访客页面：DISABLED 转人工](docs/demo-assets/05-model-disabled-handoff.png)
 - [演示流程及证据说明](docs/MVP_DEMO_PACKAGE.md)
 
 ## 当前边界

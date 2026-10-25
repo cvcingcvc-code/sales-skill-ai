@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-26",
+  "timezone": "Asia/Shanghai",
+  "implementation_baseline": "11a66b222a26ceb37eded6582b545cde69f31a22",
+  "scope": "Historical answer evidence; no real model acceptance",
+  "environment": {
+    "platform": "Linux x86_64 cloud executor",
+    "python": "3.12.14",
+    "services": ["real FastAPI", "real Streamlit", "Chromium", "isolated SQLite"],
+    "model_enabled": false
+  },
+  "offline_regression": {
+    "focused_tests": 14,
+    "support_group_tests": 209,
+    "full_tests": 462,
+    "fail": 0,
+    "error": 0,
+    "skipped": 0,
+    "expected_failures": 0,
+    "unexpected_successes": 0,
+    "network_attempts": 0,
+    "strict": true,
+    "status": "PASS",
+    "model_validation": "NOT_RUN"
+  },
+  "live_http_browser": {
+    "historical_fixture": "Synthetic historical message seeded directly through Store as mock_selection, not website inference",
+    "product_and_knowledge_admin_http_create": "PASS",
+    "knowledge_admin_http_approval": "PASS",
+    "catalog_http_update_preserves_prior_snapshot": "PASS",
+    "historical_price_cents": 1299,
+    "current_price_cents": 2999,
+    "admin_history_browser_snapshot": "PASS",
+    "unauthenticated_admin_snapshot_http": 401,
+    "other_conversation_credentials_http": 403,
+    "own_visitor_history_has_no_snapshot_fields": true,
+    "real_visitor_chat_model_status": "DISABLED",
+    "pending_handoff_visible_to_admin": true,
+    "fastapi_streamlit_process_restart_snapshot_read": "PASS",
+    "sqlite_read_after_services_stopped": "PASS",
+    "real_model_requests": 0,
+    "model_validation": "NOT_RUN",
+    "first_attempt": "FAIL: exact text locator omitted visitor message role prefix; only temporary test locator corrected, then complete rerun PASS",
+    "screenshots": ["04-answer-evidence-mock.png", "05-model-disabled-handoff.png"]
+  },
+  "limits": [
+    "MOCK fixture only verifies historical facts persistence and display",
+    "Not personal Windows or real model acceptance",
+    "No production/public deployment verification",
+    "Legacy replies without snapshots are not backfilled",
+    "Snapshots are not a tamper-proof audit or full document version archive"
+  ]
+}

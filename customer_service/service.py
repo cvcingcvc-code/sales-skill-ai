@@ -276,10 +276,10 @@ class CustomerService:
     def _response(self, cid, reply, source, model_status, products, citations, handoff=None):
         return {"conversation_id": cid, "reply": reply, "source": source, "model_status": model_status,
                 "products": products, "citations": citations, "handoff": handoff,
-                "need_summary": self.store.get_admin_conversation(cid)["need_summary"]}
+                "need_summary": self.store.get_admin_conversation(cid, include_evidence=False)["need_summary"]}
 
     def _inference_state_changed(self, cid, epoch, model_status):
-        latest = self.store.get_admin_conversation(cid)
+        latest = self.store.get_admin_conversation(cid, include_evidence=False)
         if latest["status"] == "closed":
             raise SupportError("conversation_closed", "会话已关闭，请创建新会话。", 409)
         if latest["status"] == "human":
@@ -295,7 +295,7 @@ class CustomerService:
         message = _text(message, "客户消息", 4000, True)
         original_risk = self._risk(message)
         safe_message = redact_sensitive(message)
-        conversation = self.store.get_admin_conversation(conversation_id)
+        conversation = self.store.get_admin_conversation(conversation_id, include_evidence=False)
         if conversation["status"] == "closed":
             raise SupportError("conversation_closed", "会话已关闭，请创建新会话。", 409)
         epoch = conversation["ai_epoch"]
@@ -452,7 +452,8 @@ class CustomerService:
                     item["product_name"] = product["name"]
             reply = self._render(selected_products, selected_knowledge)
             source = "mock_selection" if status == "MOCK" else "managed_catalog"
-            if not self.store.add_ai_message_if_active(conversation_id, reply, source, expected_epoch=epoch):
+            if not self.store.add_ai_message_if_active(conversation_id, reply, source, expected_epoch=epoch,
+                    evidence={"products": selected_products, "citations": selected_knowledge}):
                 changed = self._inference_state_changed(conversation_id, epoch, status)
                 if changed is not None:
                     return changed

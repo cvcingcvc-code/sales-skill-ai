@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 import math
 import os
 import secrets
@@ -67,7 +68,7 @@ class Store:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id TEXT NOT NULL REFERENCES conversations(id),
                     role TEXT NOT NULL, content TEXT NOT NULL, source TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL, evidence_json TEXT
                 );
                 CREATE TABLE IF NOT EXISTS handoffs (
                     id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id),
@@ -112,6 +113,9 @@ class Store:
                 conn.execute("ALTER TABLE knowledge ADD COLUMN review_status TEXT NOT NULL DEFAULT 'draft' CHECK(review_status IN ('draft','approved'))")
             if "reviewed_at" not in knowledge_columns:
                 conn.execute("ALTER TABLE knowledge ADD COLUMN reviewed_at TEXT")
+            message_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
+            if "evidence_json" not in message_columns:
+                conn.execute("ALTER TABLE messages ADD COLUMN evidence_json TEXT")
 
     @staticmethod
     def _actor(actor):
@@ -257,16 +261,22 @@ class Store:
 
     def get_conversation(self, conversation_id, token):
         self.authorize(conversation_id, token)
-        return self.get_admin_conversation(conversation_id)
+        return self.get_admin_conversation(conversation_id, include_evidence=False)
 
-    def get_admin_conversation(self, conversation_id):
+    def get_admin_conversation(self, conversation_id, *, include_evidence=True):
         with self.connection() as conn:
             row = conn.execute("SELECT id,status,need_summary,created_at,updated_at,last_activity_at,ai_epoch FROM conversations WHERE id=?", (conversation_id,)).fetchone()
             if row is None:
                 raise SupportError("not_found", "会话不存在", 404)
             result = dict(row)
+            # Visitor reads do not select historical merchant snapshots at all.
+            columns = "id,role,content,source,created_at" + (",evidence_json" if include_evidence else "")
             result["messages"] = [dict(r) for r in conn.execute(
-                "SELECT id,role,content,source,created_at FROM messages WHERE conversation_id=? ORDER BY id", (conversation_id,))]
+                f"SELECT {columns} FROM messages WHERE conversation_id=? ORDER BY id", (conversation_id,))]
+            if include_evidence:
+                for message in result["messages"]:
+                    encoded = message.pop("evidence_json")
+                    message["evidence"] = json.loads(encoded) if encoded is not None else None
             result["handoffs"] = [dict(r) for r in conn.execute(
                 "SELECT * FROM handoffs WHERE conversation_id=? ORDER BY created_at", (conversation_id,))]
         return result
@@ -295,23 +305,44 @@ class Store:
                          (conversation_id, role, content, source, now))
             self._touch(conn, conversation_id, now)
 
-    def add_ai_message_if_active(self, conversation_id, content, source, expected_epoch=None):
+    @staticmethod
+    def _encode_evidence(evidence, source):
+        if evidence is None:
+            return None
+        if source not in ("managed_catalog", "mock_selection") or not isinstance(evidence, dict):
+            raise SupportError("invalid_input", "答复依据无效")
+        # Copy only managed public facts, never model output, prompts or credentials.
+        fields = {
+            "products": ("id", "name", "description", "price_cents", "currency", "url", "active", "updated_at"),
+            "citations": ("id", "title", "content", "kind", "product_id", "product_name", "active",
+                          "updated_at", "review_status", "reviewed_at"),
+        }
+        snapshot = {"version": 1}
+        for key, limit in (("products", 6), ("citations", 8)):
+            rows = evidence.get(key)
+            if not isinstance(rows, list) or len(rows) > limit or not all(isinstance(row, dict) for row in rows):
+                raise SupportError("invalid_input", "答复依据无效")
+            snapshot[key] = [{field: row[field] for field in fields[key] if field in row} for row in rows]
+        return json.dumps(snapshot, ensure_ascii=False)
+
+    def add_ai_message_if_active(self, conversation_id, content, source, expected_epoch=None, *, evidence=None):
         """Atomically suppress a response after takeover, closure or an AI generation change.
 
         Callers retaining the original three-argument signature keep the status guard.
         Inference callers should pass the epoch captured before the model request.
         """
         content = _text(content, "消息", 16000, True)
+        encoded = self._encode_evidence(evidence, source)
         if expected_epoch is not None and (type(expected_epoch) is not int or expected_epoch < 0):
             raise SupportError("invalid_input", "AI 会话版本无效")
         with self.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
             now = _now()
-            cursor = conn.execute("""INSERT INTO messages(conversation_id,role,content,source,created_at)
-                SELECT ?, 'assistant', ?, ?, ?
+            cursor = conn.execute("""INSERT INTO messages(conversation_id,role,content,source,created_at,evidence_json)
+                SELECT ?, 'assistant', ?, ?, ?, ?
                 WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND status='ai'
                     AND (? IS NULL OR ai_epoch=?))""",
-                (conversation_id, content, source, now, conversation_id, expected_epoch, expected_epoch))
+                (conversation_id, content, source, now, encoded, conversation_id, expected_epoch, expected_epoch))
             if cursor.rowcount == 1:
                 self._touch(conn, conversation_id, now)
                 return True
