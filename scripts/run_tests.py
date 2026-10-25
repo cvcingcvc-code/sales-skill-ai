@@ -28,7 +28,7 @@ TEST_GROUPS = {
         "test_llm_client.py", "test_model_gateway.py", "test_model_offline.py",
         "test_model_preflight.py", "test_preflight_budget.py", "test_resource_controls.py",
     ),
-    "ui": ("test_demo_v2.py", "test_streamlit_regressions.py", "test_workbench_v2.py"),
+    "ui": ("test_demo_v2.py", "test_streamlit_regressions.py", "test_workbench_v2.py", "test_catalog_editor.py"),
 }
 
 

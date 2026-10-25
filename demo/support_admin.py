@@ -94,50 +94,88 @@ def _managed_catalog(api: SupportAPI, authorized: bool):
     if not authorized:
         return
     products = _call(api, "GET", "/admin/products", admin=True)
-    _table(_rows(products, "products"), ("id", "name", "description", "price_cents", "currency", "url", "active"))
-    with st.form("support_product_form", clear_on_submit=False):
-        st.write("新增或更新商品；更新时填写列表中的商品 ID。")
-        product_id = st.text_input("商品 ID（新增留空）", max_chars=64)
-        name = st.text_input("商品名称", max_chars=200)
-        description = st.text_area("商品描述", max_chars=6000)
-        price = st.number_input("价格（分，人民币）", min_value=0, value=0, step=1)
-        url = st.text_input("商品链接", max_chars=2000)
-        active = st.checkbox("商品上架", value=True)
+    if products is None:
+        return
+    products = _rows(products, "products")
+    _table(products, ("id", "name", "description", "price_cents", "currency", "url", "active"))
+    product_by_id = {item["id"]: item for item in products if item.get("id")}
+    saved_product = st.session_state.pop("support_saved_product", None)
+    if saved_product:
+        st.success("商品已保存。")
+        if saved_product in product_by_id:
+            st.session_state.support_product_selection = saved_product
+    selected_product = st.selectbox(
+        "选择商品", [None, *product_by_id], key="support_product_selection",
+        format_func=lambda value: "新增商品" if value is None else f"{product_by_id[value]['name']}（{value}）",
+    )
+    product = product_by_id.get(selected_product, {})
+    # A separate form identity per record prevents drafts leaking into another item.
+    with st.form(f"support_product_form_{'new' if selected_product is None else 'edit_' + selected_product}", clear_on_submit=False):
+        product_id = st.text_input("商品 ID", value=product.get("id", ""), max_chars=64,
+                                   disabled=selected_product is not None, help="新增可留空自动生成；编辑已有商品时 ID 锁定。")
+        name = st.text_input("商品名称", value=product.get("name", ""), max_chars=200)
+        description = st.text_area("商品描述", value=product.get("description", ""), max_chars=6000)
+        price = st.number_input("价格（分，人民币）", min_value=0, value=product.get("price_cents", 0), step=1)
+        url = st.text_input("商品链接", value=product.get("url", ""), max_chars=2000)
+        active = st.checkbox("商品上架", value=product.get("active", True))
         submitted = st.form_submit_button("保存商品")
     if submitted:
         if not name.strip() or not description.strip():
             st.warning("请填写商品名称与描述。")
+        elif selected_product is None and product_id.strip() in product_by_id:
+            st.warning("商品 ID 已存在，请从“选择商品”加载记录后编辑。")
         else:
             body = {"name": name.strip(), "description": description, "price_cents": int(price),
                     "currency": "CNY", "url": url, "active": active}
-            if product_id.strip():
-                body["id"] = product_id.strip()
-            if _call(api, "POST", "/admin/products", body=body, admin=True) is not None:
-                st.success("商品已保存；列表将在下次操作时更新。")
+            if selected_product is not None or product_id.strip():
+                body["id"] = selected_product if selected_product is not None else product_id.strip()
+            saved = _call(api, "POST", "/admin/products", body=body, admin=True)
+            if isinstance(saved, dict) and saved.get("id"):
+                st.session_state.support_saved_product = saved["id"]
+                st.rerun()
     knowledge = _call(api, "GET", "/admin/knowledge", admin=True)
-    _table(_rows(knowledge, "knowledge"), ("id", "title", "content", "kind", "product_id", "active"))
-    with st.form("support_knowledge_form", clear_on_submit=False):
-        st.write("管理商品文档、常见问题与售后政策。")
-        knowledge_id = st.text_input("知识 ID（新增留空）", max_chars=64)
-        title = st.text_input("知识标题", max_chars=200)
-        content = st.text_area("知识内容", max_chars=12000)
-        kind_label = st.selectbox("知识类型", ["商品文档", "常见问题", "售后政策"])
-        related_product = st.text_input("关联商品 ID（可选）", max_chars=64)
-        knowledge_active = st.checkbox("知识启用", value=True)
+    if knowledge is None:
+        return
+    knowledge = _rows(knowledge, "knowledge")
+    _table(knowledge, ("id", "title", "content", "kind", "product_id", "active"))
+    knowledge_by_id = {item["id"]: item for item in knowledge if item.get("id")}
+    saved_knowledge = st.session_state.pop("support_saved_knowledge", None)
+    if saved_knowledge:
+        st.success("知识已保存。")
+        if saved_knowledge in knowledge_by_id:
+            st.session_state.support_knowledge_selection = saved_knowledge
+    selected_knowledge = st.selectbox(
+        "选择知识", [None, *knowledge_by_id], key="support_knowledge_selection",
+        format_func=lambda value: "新增知识" if value is None else f"{knowledge_by_id[value]['title']}（{value}）",
+    )
+    document = knowledge_by_id.get(selected_knowledge, {})
+    kinds = {"商品文档": "product", "常见问题": "faq", "售后政策": "policy"}
+    with st.form(f"support_knowledge_form_{'new' if selected_knowledge is None else 'edit_' + selected_knowledge}", clear_on_submit=False):
+        knowledge_id = st.text_input("知识 ID", value=document.get("id", ""), max_chars=64,
+                                     disabled=selected_knowledge is not None, help="新增可留空自动生成；编辑已有知识时 ID 锁定。")
+        title = st.text_input("知识标题", value=document.get("title", ""), max_chars=200)
+        content = st.text_area("知识内容", value=document.get("content", ""), max_chars=12000)
+        kind_label = st.selectbox("知识类型", list(kinds), index=list(kinds.values()).index(document.get("kind", "product")))
+        related_product = st.text_input("关联商品 ID（可选）", value=document.get("product_id") or "", max_chars=64)
+        knowledge_active = st.checkbox("知识启用", value=document.get("active", True))
         saved = st.form_submit_button("保存知识")
     if saved:
         if not title.strip() or not content.strip():
             st.warning("请填写知识标题与内容。")
+        elif selected_knowledge is None and knowledge_id.strip() in knowledge_by_id:
+            st.warning("知识 ID 已存在，请从“选择知识”加载记录后编辑。")
         else:
             body = {"title": title.strip(), "content": content,
-                    "kind": {"商品文档": "product", "常见问题": "faq", "售后政策": "policy"}[kind_label],
+                    "kind": kinds[kind_label],
                     "active": knowledge_active}
-            if knowledge_id.strip():
-                body["id"] = knowledge_id.strip()
+            if selected_knowledge is not None or knowledge_id.strip():
+                body["id"] = selected_knowledge if selected_knowledge is not None else knowledge_id.strip()
             if related_product.strip():
                 body["product_id"] = related_product.strip()
-            if _call(api, "POST", "/admin/knowledge", body=body, admin=True) is not None:
-                st.success("知识已保存；列表将在下次操作时更新。")
+            result = _call(api, "POST", "/admin/knowledge", body=body, admin=True)
+            if isinstance(result, dict) and result.get("id"):
+                st.session_state.support_saved_knowledge = result["id"]
+                st.rerun()
 
 
 def _render_message_metadata(payload: dict):
