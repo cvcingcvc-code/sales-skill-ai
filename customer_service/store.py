@@ -53,7 +53,9 @@ class Store:
                     id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
                     kind TEXT NOT NULL CHECK(kind IN ('product','faq','policy')),
                     product_id TEXT REFERENCES products(id), active INTEGER NOT NULL DEFAULT 1,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    review_status TEXT NOT NULL DEFAULT 'draft' CHECK(review_status IN ('draft','approved')),
+                    reviewed_at TEXT
                 );
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ai',
@@ -105,6 +107,11 @@ class Store:
             conn.execute("""UPDATE conversations SET last_activity_at=COALESCE(
                 (SELECT MAX(created_at) FROM messages WHERE conversation_id=conversations.id),created_at)
                 WHERE last_activity_at=''""")
+            knowledge_columns = {row["name"] for row in conn.execute("PRAGMA table_info(knowledge)")}
+            if "review_status" not in knowledge_columns:
+                conn.execute("ALTER TABLE knowledge ADD COLUMN review_status TEXT NOT NULL DEFAULT 'draft' CHECK(review_status IN ('draft','approved'))")
+            if "reviewed_at" not in knowledge_columns:
+                conn.execute("ALTER TABLE knowledge ADD COLUMN reviewed_at TEXT")
 
     @staticmethod
     def _actor(actor):
@@ -190,21 +197,45 @@ class Store:
         content = _text(content, "知识正文", 12000, True)
         if kind not in ("product", "faq", "policy") or type(active) is not bool:
             raise SupportError("invalid_input", "知识类型或状态无效")
-        if product_id is not None and not self.get_product(product_id):
-            raise SupportError("unknown_product", "知识关联的商品不存在")
         kid = _text(id, "知识 ID", 100, True) if id is not None else _id()
         with self.connection() as conn:
-            conn.execute("""INSERT INTO knowledge VALUES (?, ?, ?, ?, ?, ?, ?)
+            conn.execute("BEGIN IMMEDIATE")
+            if product_id is not None and conn.execute("SELECT 1 FROM products WHERE id=?", (product_id,)).fetchone() is None:
+                raise SupportError("unknown_product", "知识关联的商品不存在")
+            prior = conn.execute("SELECT * FROM knowledge WHERE id=?", (kid,)).fetchone()
+            unchanged = prior is not None and all(prior[key] == value for key, value in (
+                ("title", title), ("content", content), ("kind", kind), ("product_id", product_id)))
+            review_status = prior["review_status"] if unchanged else "draft"
+            reviewed_at = prior["reviewed_at"] if unchanged else None
+            conn.execute("""INSERT INTO knowledge
+                (id,title,content,kind,product_id,active,updated_at,review_status,reviewed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content,
                 kind=excluded.kind, product_id=excluded.product_id, active=excluded.active,
-                updated_at=excluded.updated_at""", (kid, title, content, kind, product_id, int(active), _now()))
+                updated_at=excluded.updated_at,review_status=excluded.review_status,reviewed_at=excluded.reviewed_at""",
+                (kid, title, content, kind, product_id, int(active), _now(), review_status, reviewed_at))
             row = conn.execute("SELECT * FROM knowledge WHERE id=?", (kid,)).fetchone()
+        return self._item(row)
+
+    def approve_knowledge(self, knowledge_id, *, expected_updated_at):
+        expected_updated_at = _text(expected_updated_at, "待审核版本", 64, True)
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM knowledge WHERE id=?", (knowledge_id,)).fetchone()
+            if row is None:
+                raise SupportError("not_found", "知识不存在", 404)
+            if row["updated_at"] != expected_updated_at:
+                raise SupportError("knowledge_changed", "知识已更新，请重新核对当前保存版本后审核", 409)
+            if row["review_status"] != "approved":
+                conn.execute("UPDATE knowledge SET review_status='approved',reviewed_at=? WHERE id=?",
+                             (_now(), knowledge_id))
+            row = conn.execute("SELECT * FROM knowledge WHERE id=?", (knowledge_id,)).fetchone()
         return self._item(row)
 
     def list_knowledge(self, active_only=False):
         with self.connection() as conn:
             rows = conn.execute("""SELECT k.* FROM knowledge k LEFT JOIN products p ON p.id=k.product_id
-                WHERE (?=0 OR (k.active=1 AND (k.product_id IS NULL OR p.active=1)))
+                WHERE (?=0 OR (k.active=1 AND k.review_status='approved' AND (k.product_id IS NULL OR p.active=1)))
                 ORDER BY k.title, k.id""", (int(active_only),)).fetchall()
         return [self._item(row) for row in rows]
 

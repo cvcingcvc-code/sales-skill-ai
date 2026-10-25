@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 
+from tests.support_fixtures import reviewed_knowledge
 from customer_service import CustomerService, Store
 
 
@@ -44,7 +45,7 @@ class TestRetrievalQuality(unittest.TestCase):
         self.session = self.service.create_conversation()
 
     def knowledge(self, kid, title, content, product_id="p1", active=True):
-        return self.store.upsert_knowledge(kid, title=title, content=content, kind="policy",
+        return reviewed_knowledge(self.store, kid, title=title, content=content, kind="policy",
                                           product_id=product_id, active=active)
 
     def chat(self, message, product_ids=(), knowledge_ids=()):
@@ -264,7 +265,7 @@ class TestRetrievalBenchmark(unittest.TestCase):
                 token = f"feature{index:02d}"
                 product_id, knowledge_id = f"bench-product-{index:02d}", f"bench-faq-{index:02d}"
                 store.upsert_product(product_id, name=f"Item{index:02d}", description=f"device {token}", price_cents=1000)
-                store.upsert_knowledge(knowledge_id, title=f"Warranty {token}", content=f"Coverage for {token}",
+                reviewed_knowledge(store, knowledge_id, title=f"Warranty {token}", content=f"Coverage for {token}",
                                        kind="faq", product_id=product_id)
                 category = ("similar_names" if index < 4 else "comparison" if index < 8 else
                             "late_document" if index < 12 else "policy" if index < 16 else
@@ -276,13 +277,13 @@ class TestRetrievalBenchmark(unittest.TestCase):
                               "knowledge": [knowledge_id], "category": category})
                 if index == 11:
                     for noise in range(8):
-                        store.upsert_knowledge(f"bench-noise-{noise}", title=f"A{noise} unrelated general notes",
+                        reviewed_knowledge(store, f"bench-noise-{noise}", title=f"A{noise} unrelated general notes",
                                                content="General information for an unrelated topic", kind="faq",
                                                product_id=product_id)
 
             # Similar product names must respect an explicit exact catalog scope.
             store.upsert_product("similar-pro", name="Item00 Pro", description="device feature00 premium", price_cents=2000)
-            store.upsert_knowledge("similar-pro-faq", title="Warranty feature00 premium", content="Premium coverage",
+            reviewed_knowledge(store, "similar-pro-faq", title="Warranty feature00 premium", content="Premium coverage",
                                    kind="faq", product_id="similar-pro")
             cases.append({"query": "Item00 warranty", "products": ["bench-product-00"],
                           "knowledge": ["bench-faq-00"], "category": "similar_names"})
@@ -291,10 +292,10 @@ class TestRetrievalBenchmark(unittest.TestCase):
             cases.append({"query": "compare Item01 and Item02 warranty", "products": ["bench-product-01", "bench-product-02"],
                           "knowledge": ["bench-faq-01", "bench-faq-02"], "category": "comparison"})
             store.upsert_product("inactive", name="InactiveDevice", description="inactive feature", price_cents=1000, active=False)
-            store.upsert_knowledge("inactive-faq", title="Warranty inactive", content="Inactive policy", kind="faq",
+            reviewed_knowledge(store, "inactive-faq", title="Warranty inactive", content="Inactive policy", kind="faq",
                                    product_id="inactive")
             store.upsert_product("removed", name="RemovedDevice", description="removed feature", price_cents=1000)
-            store.upsert_knowledge("removed-faq", title="Warranty removed", content="Removed policy", kind="faq",
+            reviewed_knowledge(store, "removed-faq", title="Warranty removed", content="Removed policy", kind="faq",
                                    product_id="removed")
             store.upsert_product("removed", name="RemovedDevice", description="removed feature", price_cents=1000, active=False)
             for query in ("unregisteredtopic00 detail", "unregisteredtopic01 detail",

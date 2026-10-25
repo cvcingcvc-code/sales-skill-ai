@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from agent_skill.api_server import create_app
 from core.model_gateway import ModelConfig, ModelError, ModelGateway
+from tests.support_fixtures import reviewed_knowledge
 from customer_service.store import Store
 
 
@@ -71,7 +72,7 @@ class TestPreflightBudget(unittest.TestCase):
         self.assert_no_spending()
 
     def test_long_knowledge_rejected_before_budget_reservation(self):
-        self.store.upsert_knowledge("long", title="合成试验杯说明", content="使用说明" * 2000, product_id="p1")
+        reviewed_knowledge(self.store, "long", title="合成试验杯说明", content="使用说明" * 2000, product_id="p1")
         result = self.ask()
         self.assertEqual(result["source"], "human_handoff")
         self.assertEqual(result["handoff"]["reason"], "context_too_large")
@@ -87,9 +88,9 @@ class TestPreflightBudget(unittest.TestCase):
         self.assertEqual(len(self.requests), 1)
 
     def test_low_ranked_documents_are_removed_whole_and_top_policy_is_preserved(self):
-        self.store.upsert_knowledge("relevant", title="合成试验杯保修期限", content="保修一年", product_id="p1")
+        reviewed_knowledge(self.store, "relevant", title="合成试验杯保修期限", content="保修一年", product_id="p1")
         for doc_id in ("a-noise", "b-noise", "c-noise"):
-            self.store.upsert_knowledge(doc_id, title="补充包装资料", content="包装信息" * 400,
+            reviewed_knowledge(self.store, doc_id, title="补充包装资料", content="包装信息" * 400,
                                         product_id="p1")
         self.selection = {"product_ids": [], "knowledge_ids": ["relevant"], "needs_human": False}
         response = self.client.post(f"/support/conversations/{self.cid}/messages", headers=self.headers,
@@ -144,7 +145,7 @@ class TestPreflightBudget(unittest.TestCase):
 
     def test_removed_policy_id_cannot_be_selected_after_context_packing(self):
         for doc_id in ("a-policy", "z-removed-policy"):
-            self.store.upsert_knowledge(doc_id, title="合成试验杯保修政策",
+            reviewed_knowledge(self.store, doc_id, title="合成试验杯保修政策",
                 content="仅供回归测试：本合成商品享有一年质量保修。", kind="policy", product_id="p1")
 
         class TrimmedPolicyGateway:

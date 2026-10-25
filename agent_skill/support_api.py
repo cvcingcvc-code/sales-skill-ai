@@ -78,6 +78,10 @@ class RetentionInput(InputModel):
     days: int = Field(ge=1, le=36500, strict=True)
 
 
+class KnowledgeApprovalInput(ConfirmationInput):
+    expected_updated_at: str = Field(min_length=1, max_length=64)
+
+
 class PurgeInput(RetentionInput, ConfirmationInput):
     pass
 
@@ -150,6 +154,10 @@ def build_router(service, store, gateway) -> APIRouter:
     @admin.post("/knowledge")
     def knowledge(payload: KnowledgeInput):
         return store.upsert_knowledge(**payload.model_dump())
+
+    @admin.post("/knowledge/{knowledge_id}/approve")
+    def approve_knowledge(knowledge_id: str, payload: KnowledgeApprovalInput):
+        return store.approve_knowledge(knowledge_id, expected_updated_at=payload.expected_updated_at)
 
     @admin.get("/conversations")
     def list_conversations():

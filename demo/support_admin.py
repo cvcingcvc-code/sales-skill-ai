@@ -137,7 +137,9 @@ def _managed_catalog(api: SupportAPI, authorized: bool):
     if knowledge is None:
         return
     knowledge = _rows(knowledge, "knowledge")
-    _table(knowledge, ("id", "title", "content", "kind", "product_id", "active"))
+    _table(knowledge, ("id", "title", "content", "kind", "product_id", "active", "review_status", "reviewed_at"))
+    if st.session_state.pop("support_reviewed_knowledge", None):
+        st.success("当前保存版本已审核通过；启用且关联商品在售时才会用于客服检索。")
     knowledge_by_id = {item["id"]: item for item in knowledge if item.get("id")}
     saved_knowledge = st.session_state.pop("support_saved_knowledge", None)
     if saved_knowledge:
@@ -175,6 +177,26 @@ def _managed_catalog(api: SupportAPI, authorized: bool):
             result = _call(api, "POST", "/admin/knowledge", body=body, admin=True)
             if isinstance(result, dict) and result.get("id"):
                 st.session_state.support_saved_knowledge = result["id"]
+                st.rerun()
+    if document:
+        approved = document.get("review_status") == "approved"
+        st.caption("审核状态：" + ("已审核" if approved else "待审核"))
+        st.caption("仅审核下方已保存的版本；编辑区的修改请先保存。内容、类型或关联商品变更后需要重新审核。")
+        with st.expander("核对已保存的知识", expanded=not approved):
+            st.write(document["title"])
+            st.write(document["content"])
+            st.caption(f"类型：{document['kind']} · 关联商品：{document.get('product_id') or '通用'} · 启用：{document['active']}")
+            st.caption(f"保存时间：{document['updated_at']} · 审核时间：{document.get('reviewed_at') or '尚未审核'}")
+        # The content-version key resets confirmation if another admin edits it.
+        version_key = f"{selected_knowledge}_{document['updated_at']}"
+        confirmed = st.checkbox("我已核对上述已保存版本，同意用于客服回答", value=False,
+                                key=f"support_knowledge_review_{version_key}", disabled=approved)
+        if st.button("审核通过所选知识", key=f"support_knowledge_approve_{version_key}",
+                     disabled=approved or not confirmed):
+            result = _call(api, "POST", f"/admin/knowledge/{_id(selected_knowledge)}/approve", admin=True,
+                           body={"confirm": True, "expected_updated_at": document["updated_at"]})
+            if isinstance(result, dict) and result.get("review_status") == "approved":
+                st.session_state.support_reviewed_knowledge = result["id"]
                 st.rerun()
 
 

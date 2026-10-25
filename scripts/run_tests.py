@@ -18,7 +18,7 @@ from unittest.mock import patch
 TEST_GROUPS = {
     "support": (
         "test_customer_service.py", "test_support_api.py", "test_retrieval_quality.py",
-        "test_preflight_budget.py", "test_data_lifecycle.py", "test_resource_controls.py",
+        "test_preflight_budget.py", "test_data_lifecycle.py", "test_resource_controls.py", "test_knowledge_review.py",
     ),
     "training": (
         "test_roleplay.py", "test_scorer.py", "test_score_scales.py",

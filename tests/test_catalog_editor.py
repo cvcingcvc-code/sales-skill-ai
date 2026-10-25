@@ -208,3 +208,52 @@ class TestCatalogEditor(unittest.TestCase):
         self.assertTrue(app.error)
         self.assertFalse(app.button)
         self.assertFalse(any(method == "POST" for method, _, _ in self.requests))
+
+    def test_review_requires_confirmation_and_preserves_disabled_status(self):
+        app = self.app()
+        self.select(app, "选择知识", "k1")
+        self.assertTrue(self.field(app.button, "审核通过所选知识").disabled)
+        self.field(app.checkbox, "我已核对上述已保存版本，同意用于客服回答").check().run()
+        self.assertFalse(self.field(app.button, "审核通过所选知识").disabled)
+        self.save(app, "审核通过所选知识")
+        stored = next(item for item in self.store.list_knowledge() if item["id"] == "k1")
+        self.assertEqual(stored["review_status"], "approved")
+        self.assertIsNotNone(stored["reviewed_at"])
+        self.assertFalse(stored["active"])
+        self.assertEqual(self.store.list_knowledge(active_only=True), [])
+        self.assertTrue(self.field(app.button, "审核通过所选知识").disabled)
+        approval = next(kwargs for method, path, kwargs in self.requests if method == "POST" and path.endswith("/approve"))
+        self.assertEqual(approval["json"], {"confirm": True, "expected_updated_at": self.document["updated_at"]})
+
+    def test_editing_reviewed_content_resets_review_and_confirmation(self):
+        self.store.approve_knowledge("k1", expected_updated_at=self.document["updated_at"])
+        app = self.app()
+        self.select(app, "选择知识", "k1")
+        self.assertTrue(self.field(app.button, "审核通过所选知识").disabled)
+        self.field(app.text_area, "知识内容").set_value("新版内容仍需要人工核对。")
+        self.save(app, "保存知识")
+        stored = next(item for item in self.store.list_knowledge() if item["id"] == "k1")
+        self.assertEqual(stored["review_status"], "draft")
+        self.assertIsNone(stored["reviewed_at"])
+        self.assertFalse(self.field(app.checkbox, "我已核对上述已保存版本，同意用于客服回答").value)
+        self.assertTrue(self.field(app.button, "审核通过所选知识").disabled)
+
+    def test_review_confirmation_does_not_carry_to_another_record(self):
+        app = self.app()
+        self.select(app, "选择知识", "k1")
+        self.field(app.checkbox, "我已核对上述已保存版本，同意用于客服回答").check().run()
+        self.select(app, "选择知识", "k2")
+        self.assertFalse(self.field(app.checkbox, "我已核对上述已保存版本，同意用于客服回答").value)
+        self.assertTrue(self.field(app.button, "审核通过所选知识").disabled)
+        self.assertFalse(any(method == "POST" and path.endswith("/approve") for method, path, _ in self.requests))
+
+    def test_external_change_resets_confirmation_instead_of_approving_unseen_content(self):
+        app = self.app()
+        self.select(app, "选择知识", "k1")
+        self.field(app.checkbox, "我已核对上述已保存版本，同意用于客服回答").check().run()
+        self.store.upsert_knowledge("k1", title=self.document["title"], content="另一位管理员保存的新内容。",
+                                    kind="policy", product_id="p1", active=False)
+        self.save(app, "审核通过所选知识")
+        self.assertFalse(any(method == "POST" and path.endswith("/approve") for method, path, _ in self.requests))
+        self.assertEqual(self.store.list_knowledge()[0]["review_status"], "draft")
+        self.assertFalse(self.field(app.checkbox, "我已核对上述已保存版本，同意用于客服回答").value)

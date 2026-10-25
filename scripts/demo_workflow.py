@@ -55,6 +55,9 @@ def run(mock=False):
                     "product_id": "synthetic-demo-cup",
                 })
                 assert knowledge.status_code == 200
+                approved = client.post("/admin/knowledge/synthetic-demo-policy/approve", headers=admin,
+                                       json={"confirm": True, "expected_updated_at": knowledge.json()["updated_at"]})
+                assert approved.status_code == 200
                 catalog = client.get("/support/products").json()
                 assert len(catalog) == 1
                 conversation = client.post("/support/conversations").json()

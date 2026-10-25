@@ -84,7 +84,11 @@ class TestSupportAPI(unittest.TestCase):
             "kind": "policy", "product_id": product_id, "active": True,
         })
         self.assertEqual(response.status_code, 200, response.text)
-        return response.json()
+        document = response.json()
+        approved = self.client.post(f"/admin/knowledge/{document['id']}/approve", headers=self.admin,
+                                    json={"confirm": True, "expected_updated_at": document["updated_at"]})
+        self.assertEqual(approved.status_code, 200, approved.text)
+        return approved.json()
 
     def test_public_health_scenarios_and_chat_page(self):
         health = self.client.get("/skill/health")

@@ -72,10 +72,11 @@ def verify(provider=None):
             description="仅用于验收的合成商品，500ml，非真实可购买商品。",
             price_cents=12345, url="https://example.invalid/synthetic-acceptance-cup",
         )
-        store.upsert_knowledge(
+        knowledge = store.upsert_knowledge(
             id="synthetic-acceptance-policy", title="验收专用合成保温杯售后资料",
             content="这是合成验收资料；实际售后由人工确认。", kind="policy", product_id=product["id"],
         )
+        store.approve_knowledge(knowledge["id"], expected_updated_at=knowledge["updated_at"])
         service = CustomerService(store=store, gateway=gateway)
         conversation = service.create_conversation()
         cid, token = conversation["id"], conversation["session_token"]
