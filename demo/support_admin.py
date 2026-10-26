@@ -157,6 +157,8 @@ def _managed_catalog(api: SupportAPI, authorized: bool):
                                      disabled=selected_knowledge is not None, help="新增可留空自动生成；编辑已有知识时 ID 锁定。")
         title = st.text_input("知识标题", value=document.get("title", ""), max_chars=200)
         content = st.text_area("知识内容", value=document.get("content", ""), max_chars=12000)
+        source_note = st.text_input("资料来源（内部备注，可选）", value=document.get("source_note", ""), max_chars=1000,
+                                    help="例如商家核对的文档名称、版本或页码。只供后台追溯，不发送给模型或访客；请勿填写凭据或客户资料。")
         kind_label = st.selectbox("知识类型", list(kinds), index=list(kinds.values()).index(document.get("kind", "product")))
         related_product = st.text_input("关联商品 ID（可选）", value=document.get("product_id") or "", max_chars=64)
         knowledge_active = st.checkbox("知识启用", value=document.get("active", True))
@@ -167,7 +169,7 @@ def _managed_catalog(api: SupportAPI, authorized: bool):
         elif selected_knowledge is None and knowledge_id.strip() in knowledge_by_id:
             st.warning("知识 ID 已存在，请从“选择知识”加载记录后编辑。")
         else:
-            body = {"title": title.strip(), "content": content,
+            body = {"title": title.strip(), "content": content, "source_note": source_note,
                     "kind": kinds[kind_label],
                     "active": knowledge_active}
             if selected_knowledge is not None or knowledge_id.strip():
@@ -181,10 +183,11 @@ def _managed_catalog(api: SupportAPI, authorized: bool):
     if document:
         approved = document.get("review_status") == "approved"
         st.caption("审核状态：" + ("已审核" if approved else "待审核"))
-        st.caption("仅审核下方已保存的版本；编辑区的修改请先保存。内容、类型或关联商品变更后需要重新审核。")
+        st.caption("仅审核下方已保存的版本；编辑区的修改请先保存。内容、来源、类型或关联商品变更后需要重新审核。")
         with st.expander("核对已保存的知识", expanded=not approved):
             st.write(document["title"])
             st.write(document["content"])
+            st.text("资料来源（内部）：" + (document.get("source_note") or "未填写"))
             st.caption(f"类型：{document['kind']} · 关联商品：{document.get('product_id') or '通用'} · 启用：{document['active']}")
             st.caption(f"保存时间：{document['updated_at']} · 审核时间：{document.get('reviewed_at') or '尚未审核'}")
         # The content-version key resets confirmation if another admin edits it.
@@ -338,6 +341,7 @@ def _conversation_history(api: SupportAPI, authorized: bool):
                             _table([citation], ("kind", "product_id", "product_name", "active", "updated_at",
                                                 "review_status", "reviewed_at"))
                             st.text(citation.get("content", ""))
+                            st.text("资料来源（答复时）：" + (citation.get("source_note") or "未记录"))
                 elif message.get("source") in ("managed_catalog", "mock_selection"):
                     st.caption("此历史答复未保存资料快照，不能根据当前资料反推原答复依据。")
             handoffs = _call(api, "GET", "/admin/handoffs", admin=True)

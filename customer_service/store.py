@@ -56,7 +56,7 @@ class Store:
                     product_id TEXT REFERENCES products(id), active INTEGER NOT NULL DEFAULT 1,
                     updated_at TEXT NOT NULL,
                     review_status TEXT NOT NULL DEFAULT 'draft' CHECK(review_status IN ('draft','approved')),
-                    reviewed_at TEXT
+                    reviewed_at TEXT, source_note TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS conversations (
                     id TEXT PRIMARY KEY, token_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ai',
@@ -113,6 +113,8 @@ class Store:
                 conn.execute("ALTER TABLE knowledge ADD COLUMN review_status TEXT NOT NULL DEFAULT 'draft' CHECK(review_status IN ('draft','approved'))")
             if "reviewed_at" not in knowledge_columns:
                 conn.execute("ALTER TABLE knowledge ADD COLUMN reviewed_at TEXT")
+            if "source_note" not in knowledge_columns:
+                conn.execute("ALTER TABLE knowledge ADD COLUMN source_note TEXT NOT NULL DEFAULT ''")
             message_columns = {row["name"] for row in conn.execute("PRAGMA table_info(messages)")}
             if "evidence_json" not in message_columns:
                 conn.execute("ALTER TABLE messages ADD COLUMN evidence_json TEXT")
@@ -196,9 +198,11 @@ class Store:
             rows = conn.execute("SELECT * FROM products WHERE (?=0 OR active=1) ORDER BY name, id", (int(active_only),)).fetchall()
         return [self._item(row) for row in rows]
 
-    def upsert_knowledge(self, id=None, *, title, content, kind="faq", product_id=None, active=True):
+    def upsert_knowledge(self, id=None, *, title, content, kind="faq", product_id=None, active=True, source_note=None):
         title = _text(title, "知识标题", 200, True)
         content = _text(content, "知识正文", 12000, True)
+        if source_note is not None:
+            source_note = _text(source_note, "资料来源", 1000)
         if kind not in ("product", "faq", "policy") or type(active) is not bool:
             raise SupportError("invalid_input", "知识类型或状态无效")
         kid = _text(id, "知识 ID", 100, True) if id is not None else _id()
@@ -207,17 +211,22 @@ class Store:
             if product_id is not None and conn.execute("SELECT 1 FROM products WHERE id=?", (product_id,)).fetchone() is None:
                 raise SupportError("unknown_product", "知识关联的商品不存在")
             prior = conn.execute("SELECT * FROM knowledge WHERE id=?", (kid,)).fetchone()
+            # Older clients omit the field: keep existing provenance on updates.
+            if source_note is None:
+                source_note = prior["source_note"] if prior is not None else ""
             unchanged = prior is not None and all(prior[key] == value for key, value in (
-                ("title", title), ("content", content), ("kind", kind), ("product_id", product_id)))
+                ("title", title), ("content", content), ("kind", kind), ("product_id", product_id),
+                ("source_note", source_note)))
             review_status = prior["review_status"] if unchanged else "draft"
             reviewed_at = prior["reviewed_at"] if unchanged else None
             conn.execute("""INSERT INTO knowledge
-                (id,title,content,kind,product_id,active,updated_at,review_status,reviewed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id,title,content,kind,product_id,active,updated_at,review_status,reviewed_at,source_note)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET title=excluded.title, content=excluded.content,
                 kind=excluded.kind, product_id=excluded.product_id, active=excluded.active,
-                updated_at=excluded.updated_at,review_status=excluded.review_status,reviewed_at=excluded.reviewed_at""",
-                (kid, title, content, kind, product_id, int(active), _now(), review_status, reviewed_at))
+                updated_at=excluded.updated_at,review_status=excluded.review_status,reviewed_at=excluded.reviewed_at,
+                source_note=excluded.source_note""",
+                (kid, title, content, kind, product_id, int(active), _now(), review_status, reviewed_at, source_note))
             row = conn.execute("SELECT * FROM knowledge WHERE id=?", (kid,)).fetchone()
         return self._item(row)
 
@@ -311,11 +320,11 @@ class Store:
             return None
         if source not in ("managed_catalog", "mock_selection") or not isinstance(evidence, dict):
             raise SupportError("invalid_input", "答复依据无效")
-        # Copy only managed public facts, never model output, prompts or credentials.
+        # Copy managed facts and merchant provenance; never raw model output or prompts.
         fields = {
             "products": ("id", "name", "description", "price_cents", "currency", "url", "active", "updated_at"),
             "citations": ("id", "title", "content", "kind", "product_id", "product_name", "active",
-                          "updated_at", "review_status", "reviewed_at"),
+                          "updated_at", "review_status", "reviewed_at", "source_note"),
         }
         snapshot = {"version": 1}
         for key, limit in (("products", 6), ("citations", 8)):

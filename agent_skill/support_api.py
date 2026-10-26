@@ -42,6 +42,7 @@ class KnowledgeInput(InputModel):
     kind: Literal["product", "faq", "policy"] = "faq"
     product_id: str | None = Field(None, min_length=1, max_length=64)
     active: bool = True
+    source_note: str | None = Field(None, max_length=1000)
 
 
 class MessageInput(InputModel):

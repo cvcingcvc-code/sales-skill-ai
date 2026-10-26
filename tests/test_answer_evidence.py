@@ -67,7 +67,8 @@ class TestAnswerEvidence(unittest.TestCase):
         self.assertEqual(message["source"], "mock_selection")
         self.assertEqual(reply["model_status"], "MOCK")
         self.assertEqual(message["evidence"], {
-            "version": 1, "products": reply["products"], "citations": reply["citations"],
+            "version": 1, "products": reply["products"],
+            "citations": [{**item, "source_note": self.knowledge["source_note"]} for item in reply["citations"]],
         })
         self.assertEqual(message["evidence"]["citations"][0]["review_status"], "approved")
         self.assertEqual(message["evidence"]["citations"][0]["reviewed_at"], self.knowledge["reviewed_at"])
@@ -94,7 +95,7 @@ class TestAnswerEvidence(unittest.TestCase):
         result = self.answer()
         evidence = self.messages()[-1]["evidence"]
         self.assertEqual(evidence["products"], [])
-        self.assertEqual(evidence["citations"], result["citations"])
+        self.assertEqual(evidence["citations"], [{**item, "source_note": self.knowledge["source_note"]} for item in result["citations"]])
         self.assertEqual(evidence["citations"][0]["product_name"], self.product["name"])
         self.gateway.selection = {"product_ids": ["p1"], "knowledge_ids": [], "needs_human": False}
         self.answer()

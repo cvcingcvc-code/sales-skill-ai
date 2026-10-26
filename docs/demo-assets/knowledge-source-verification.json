@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-26",
+  "timezone": "Asia/Shanghai",
+  "implementation_baseline": "127defb2005862cdbd32b63bd2585aca442bdd35",
+  "scope": "Merchant-only knowledge source notes; no real model acceptance",
+  "added_regressions": 14,
+  "support_group": {
+    "error": 0,
+    "expected_failures": 0,
+    "fail": 0,
+    "fail_on_skip": true,
+    "model_validation": "NOT_RUN",
+    "network_attempts": 0,
+    "run": 223,
+    "scope": "offline_mock_regression",
+    "skipped": 0,
+    "status": "PASS",
+    "strict": true,
+    "unexpected_successes": 0
+  },
+  "full_offline": {
+    "error": 0,
+    "expected_failures": 0,
+    "fail": 0,
+    "fail_on_skip": true,
+    "model_validation": "NOT_RUN",
+    "network_attempts": 0,
+    "run": 476,
+    "scope": "offline_mock_regression",
+    "skipped": 0,
+    "status": "PASS",
+    "strict": true,
+    "unexpected_successes": 0
+  },
+  "live_http_browser": {
+    "status": "PASS",
+    "platform": "Linux cloud executor, not personal Windows",
+    "services": "real FastAPI, Streamlit, Chromium, isolated SQLite",
+    "historical_fixture": "MOCK seeded directly in Store, not model inference",
+    "process_restart_persistence": "PASS",
+    "historical_source_note": "合成商家手册 v1，第 2 页。",
+    "current_source_note": "合成商家手册 v2，第 5 页。",
+    "source_only_edit_requires_review": "PASS",
+    "real_model_requests": 0,
+    "model_validation": "NOT_RUN",
+    "model_status": "DISABLED"
+  },
+  "live_checks": {
+    "source_prefill_edit_and_reapproval_in_browser": "PASS",
+    "old_approval_version_http": 409,
+    "history_displays_prior_source_after_source_edit": "PASS",
+    "unauthenticated_admin_history_http": 401,
+    "other_conversation_credentials_http": 403,
+    "visitor_disabled_handoff": "PASS",
+    "api_streamlit_restart_and_sqlite_readback": "PASS"
+  },
+  "offline_contract_checks": {
+    "source_excluded_from_selector_payload_and_visitor_responses": "PASS",
+    "source_not_used_for_keyword_retrieval": "PASS",
+    "old_clients_preserve_source_when_omitted_or_null": "PASS",
+    "legacy_rows_and_snapshots_not_backfilled": "PASS",
+    "source_change_during_inference_requires_handoff": "PASS"
+  },
+  "first_browser_attempt": "FAIL: identical knowledge text in editor and history caused strict locator ambiguity; only temporary test script scoped to history tab, then complete rerun PASS",
+  "screenshots": [
+    "06-knowledge-source-reviewed.png",
+    "07-knowledge-source-history-mock.png"
+  ],
+  "limits": [
+    "Historical message explicitly seeded as MOCK, not website inference",
+    "No real model or personal Windows acceptance",
+    "Source is self-reported text, not automatically fetched or verified",
+    "No expiry, conflict governance or tamper-proof audit",
+    "Production not verified"
+  ]
+}
