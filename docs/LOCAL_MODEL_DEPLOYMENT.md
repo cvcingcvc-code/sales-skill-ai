@@ -177,4 +177,5 @@ MODEL_TIMEOUT_SECONDS=60
 | `scripts/run_tests.py` 报 `Network connections are disabled` | 离线守卫在工作 | 这是**预期**行为：离线回归不允许任何出网。`network_attempts` 必须为 `0` |
 | Windows 上离线回归有 8–10 个错误用例 | SQLite WAL 并发写的 Windows 平台限制 | 本版本刻意不修，见 [CHANGELOG.md](../CHANGELOG.md#known-issues)；这是测试环境问题，不影响产品运行 |
 | `pip install -r requirements.lock` 报缺包 | Python 版本不是 3.12 | 确认 `python --version` 为 3.12.x，重新建虚拟环境 |
+| `py -3.12 -m venv .venv` 报 “No suitable Python runtime found” | Python 由 uv / conda / Microsoft Store 管理，`py` 启动器没登记 3.12 | 改用 `python3.12 -m venv .venv` 或 `uv venv --python 3.12 .venv`，或用 3.12 解释器完整路径建 venv |
 | Streamlit 页面能开但管理端登录失败 | API 与工作台读到的 `ADMIN_API_TOKEN` 不一致，或令牌没配 | 两个服务用同一份 `.env` 重新启动；令牌只在本机输入，不要放进 URL |

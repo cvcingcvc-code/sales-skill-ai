@@ -130,6 +130,12 @@ py -3.12 -m venv .venv
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
+> 如果 `py -3.12` 报 “No suitable Python runtime found”，说明你的 Python 由 uv、conda 或
+> Microsoft Store 管理，`py` 启动器没有登记 3.12。改用其中任一即可（只要是 3.12.x）：
+> `python3.12 -m venv .venv`、`uv venv --python 3.12 .venv`，或直接用 3.12 解释器完整路径
+> `"<python-3.12-path>\python.exe" -m venv .venv`。
+> 建好虚拟环境后确认版本：`.venv\Scripts\python.exe --version`。
+
 ### 2. macOS / Linux
 
 ```bash
