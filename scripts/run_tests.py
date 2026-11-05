@@ -9,8 +9,10 @@ import argparse
 import json
 import os
 from pathlib import Path
+import socket
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -76,10 +78,40 @@ def main(argv=None):
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root))
     blocked_attempts = []
+    # Windows implements socket.socketpair() with a real loopback TCP connect,
+    # so the asyncio event loop behind the API tests would otherwise be
+    # blocked by the offline guard. Only a connection made inside socketpair()
+    # itself, and only to a loopback address, is allowed; every other
+    # connection stays denied and is still counted as an attempt.
+    pair_state = threading.local()
+    real_socketpair = socket.socketpair
+    real_socket_connect = socket.socket.connect
 
     def deny_network(*_args, **_kwargs):
         blocked_attempts.append(True)
         raise RuntimeError("Network connections are disabled in offline regression.")
+
+    def is_loopback(address):
+        try:
+            host = address[0]
+        except (TypeError, IndexError, KeyError):
+            return False
+        if not isinstance(host, str):
+            return False
+        return host == "localhost" or host == "::1" or host.startswith("127.")
+
+    def guarded_socketpair(*args, **kwargs):
+        depth = getattr(pair_state, "depth", 0)
+        pair_state.depth = depth + 1
+        try:
+            return real_socketpair(*args, **kwargs)
+        finally:
+            pair_state.depth = depth
+
+    def guarded_connect(sock, address, *args, **kwargs):
+        if getattr(pair_state, "depth", 0) > 0 and is_loopback(address):
+            return real_socket_connect(sock, address, *args, **kwargs)
+        return deny_network(address)
 
     with tempfile.TemporaryDirectory(prefix="sales-offline-tests-") as directory:
         safe_configuration = {
@@ -100,7 +132,8 @@ def main(argv=None):
         }
         with patch.dict(os.environ, safe_configuration), \
                 patch("socket.create_connection", side_effect=deny_network), \
-                patch("socket.socket.connect", side_effect=deny_network):
+                patch.object(socket.socket, "connect", guarded_connect), \
+                patch.object(socket, "socketpair", guarded_socketpair):
             suite = unittest.TestSuite(
                 unittest.defaultTestLoader.discover(str(root / "tests"), pattern=pattern,
                                                     top_level_dir=str(root))

@@ -180,6 +180,38 @@ class OfflineRunnerTests(unittest.TestCase):
         self.assertEqual((report["status"], report["run"], report["network_attempts"]), ("FAIL", 1, 1))
         self.assertEqual((report["fail"], report["error"]), (0, 0))
 
+    def test_socketpair_internal_loopback_connection_is_not_an_attempt(self):
+        # Windows emulates socketpair() with a loopback TCP connect; the offline
+        # guard must let that internal connection through without counting it.
+        code, report, _, _, _ = self.run_fixture('''
+            class Example(unittest.TestCase):
+                def test_pair(self):
+                    left, right = socket.socketpair()
+                    try:
+                        self.assertTrue(left.fileno() >= 0)
+                    finally:
+                        left.close()
+                        right.close()
+        ''')
+        self.assertEqual(code, 0)
+        self.assertEqual((report["status"], report["run"], report["network_attempts"]), ("PASS", 1, 0))
+        self.assertEqual((report["fail"], report["error"]), (0, 0))
+
+    def test_direct_socket_connect_outside_socketpair_is_still_denied(self):
+        code, report, _, _, _ = self.run_fixture('''
+            class Example(unittest.TestCase):
+                def test_direct_connection(self):
+                    sock = socket.socket()
+                    try:
+                        with self.assertRaises(RuntimeError):
+                            sock.connect(("fixture.invalid", 443))
+                    finally:
+                        sock.close()
+        ''')
+        self.assertEqual(code, 1)
+        self.assertEqual((report["status"], report["run"], report["network_attempts"]), ("FAIL", 1, 1))
+        self.assertEqual((report["fail"], report["error"]), (0, 0))
+
     def test_report_write_failure_returns_failure_without_echoing_destination(self):
         code, report, output, errors, _ = self.run_fixture('''
             class Example(unittest.TestCase):

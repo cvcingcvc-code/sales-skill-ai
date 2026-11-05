@@ -16,6 +16,22 @@ from customer_service.store import Store, SupportError
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=timezone.utc)
 
+# The offline tests must not inherit any host application configuration, but a
+# completely empty environment also stops a spawned worker from starting on
+# Windows. Drop only the variables this application reads and keep the
+# operating-system environment intact.
+_APPLICATION_ENVIRONMENT_PREFIXES = ("MODEL_", "SUPPORT_", "DEEPSEEK_", "OLLAMA_",
+                                     "GOOGLE_", "GEMINI_", "ANTHROPIC_", "CLAUDE_", "LLM_")
+_APPLICATION_ENVIRONMENT_KEYS = ("ADMIN_API_TOKEN", "DB_PATH", "APP_ENV",
+                                 "PYTHON_DOTENV_DISABLED")
+
+
+def _application_environment():
+    """The host environment with this application's configuration removed."""
+    return {name: value for name, value in os.environ.items()
+            if not name.startswith(_APPLICATION_ENVIRONMENT_PREFIXES)
+            and name not in _APPLICATION_ENVIRONMENT_KEYS}
+
 
 def _process_reserve(arguments):
     path, cid = arguments
@@ -42,7 +58,7 @@ class ResourceControlsCase(unittest.TestCase):
         self.path = self.temp.name + "/support.db"
         self.store = Store(self.path)
         self.session = self.store.create_conversation()
-        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment = patch.dict(os.environ, _application_environment(), clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
 
