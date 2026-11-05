@@ -12,6 +12,7 @@ import threading
 from types import SimpleNamespace
 
 from customer_service import CustomerService, Store, SupportError
+from customer_service.service import SELECTION_TEMPERATURE
 
 
 class MockGateway:
@@ -456,6 +457,47 @@ class TestCustomerServiceScenarios(unittest.TestCase):
         result = self.chat("轻享耳机多少钱？")
         self.assertEqual(result["error_code"], "model_unavailable")
         self.assertNotIn("secretcredentiallowercase", json.dumps(result))
+
+    def test_64_selection_call_pins_a_deterministic_temperature(self):
+        """Record selection must not be sampled: identical input, identical ids."""
+        gateway = RecordingGateway()
+        service = CustomerService(self.store, gateway)
+        session = service.create_conversation()
+        service.chat(session["id"], session["session_token"], "轻享耳机有什么特点？")
+        self.assertEqual(gateway.calls[0]["temperature"], SELECTION_TEMPERATURE)
+        self.assertEqual(SELECTION_TEMPERATURE, 0)
+
+    def test_65_gateway_without_temperature_support_still_works(self):
+        """Legacy injected gateways do not accept the new keyword."""
+        result = self.chat("轻享耳机有什么特点？")
+        self.assertEqual(result["source"], "mock_selection")
+
+    def test_66_selection_prompt_keeps_the_grounding_rules(self):
+        """The prompt must name the record fields and the escalate-on-missing rule."""
+        result = self.chat("轻享耳机有什么特点？")
+        self.assertIsNotNone(result)
+        system = self.gateway.calls[0]["system"]
+        self.assertIn("price_cents", system)
+        self.assertIn("description", system)
+        self.assertIn("就选最相关的记录但让 needs_human=true", system)
+        self.assertIn("绝不编造 ID", system)
+
+
+class RecordingGateway(MockGateway):
+    """Accepts the production request options and records them."""
+    supports_request_output_limit = True
+    supports_request_temperature = True
+
+    def chat(self, messages, system="", model=None, max_output_tokens=None, temperature=None):
+        self.calls.append({"messages": messages, "system": system,
+                           "max_output_tokens": max_output_tokens, "temperature": temperature})
+        if self.error:
+            raise self.error
+        if self.on_chat:
+            self.on_chat()
+        return SimpleNamespace(text=self.raw if self.raw is not None else json.dumps(self.selection),
+                               provider="mock", model="offline-selection", prompt_tokens=42,
+                               completion_tokens=10, estimated_cost=self.cost)
 
 
 if __name__ == "__main__":

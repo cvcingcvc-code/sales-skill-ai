@@ -235,6 +235,42 @@ class TestModelGateway(unittest.TestCase):
         self.assertEqual(list(gateway.stream(MESSAGES)), ["本地", "回答"])
         self.assertEqual(gateway.last_result.text, "本地回答")
 
+    def test_ollama_request_carries_the_requested_temperature(self):
+        """A pinned temperature must reach the provider request unchanged."""
+        os.environ["OLLAMA_MODEL"] = "configured-local-model"
+        def handler(request):
+            payload = json.loads(request.content)
+            self.assertEqual(payload["options"]["temperature"], 0.0)
+            return httpx.Response(200, json={"done": True, "message": {"content": "{}"}})
+        result = self.gateway(handler, "ollama").chat(MESSAGES, temperature=0)
+        self.assertEqual(result.provider, "ollama")
+
+    def test_ollama_request_without_temperature_keeps_the_provider_default(self):
+        """Free-form generation must not be pinned to greedy decoding."""
+        os.environ["OLLAMA_MODEL"] = "configured-local-model"
+        def handler(request):
+            payload = json.loads(request.content)
+            self.assertNotIn("temperature", payload["options"])
+            return httpx.Response(200, json={"done": True, "message": {"content": "{}"}})
+        self.gateway(handler, "ollama").chat(MESSAGES)
+
+    def test_invalid_request_temperature_is_rejected_mock(self):
+        os.environ["OLLAMA_MODEL"] = "configured-local-model"
+        for value in ("hot", True, -1, float("nan"), float("inf")):
+            with self.subTest(value=value):
+                gateway = self.gateway(lambda request: httpx.Response(200, json={"done": True, "message": {"content": "{}"}}), "ollama")
+                with self.assertRaises(ModelError) as raised:
+                    gateway.chat(MESSAGES, temperature=value)
+                self.assertEqual(raised.exception.code, "configuration")
+                self.assertIsNone(gateway.last_result)
+
+    def test_deepseek_request_carries_the_requested_temperature(self):
+        def handler(request):
+            payload = json.loads(request.content)
+            self.assertEqual(payload["temperature"], 0.0)
+            return httpx.Response(200, json=completion())
+        self.gateway(handler).chat(MESSAGES, temperature=0)
+
     def test_failure_clears_previous_success_mock(self):
         responses = iter([httpx.Response(200, json=completion()), httpx.Response(503, text="down")])
         gateway = self.gateway(lambda request: next(responses))

@@ -64,6 +64,9 @@ class ModelConfig:
     enabled: bool = True
     max_input_tokens: int = 16000
     max_output_tokens: int = 4096
+    # None keeps the provider default. A request may pin the temperature for a
+    # deterministic classification; free-form generation keeps the default.
+    temperature: Optional[float] = None
 
     @classmethod
     def from_env(cls, provider: Optional[str] = None):
@@ -287,8 +290,11 @@ class DeepSeekProvider(ModelProvider):
 
     def _payload(self, messages, system, model, stream=False):
         self._check()
-        return {"model": model or self.config.model, "messages": self._messages(messages, system),
-                "stream": stream, "max_tokens": self.config.max_output_tokens}
+        payload = {"model": model or self.config.model, "messages": self._messages(messages, system),
+                   "stream": stream, "max_tokens": self.config.max_output_tokens}
+        if self.config.temperature is not None:
+            payload["temperature"] = self.config.temperature
+        return payload
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.config.api_key}", "Content-Type": "application/json"}
@@ -370,8 +376,11 @@ class OllamaProvider(ModelProvider):
 
     def _payload(self, messages, system, model, stream=False):
         self._check()
+        options = {"num_predict": self.config.max_output_tokens}
+        if self.config.temperature is not None:
+            options["temperature"] = self.config.temperature
         return {"model": model or self.config.model, "messages": self._messages(messages, system),
-                "stream": stream, "options": {"num_predict": self.config.max_output_tokens}}
+                "stream": stream, "options": options}
 
     def _client(self):
         # Only loopback bypasses inherited proxy routing; remote/VPN addresses
@@ -512,6 +521,7 @@ class ModelGateway:
     """One explicitly selected provider. Configuration presence does not prove readiness."""
 
     supports_request_output_limit = True
+    supports_request_temperature = True
 
     def __init__(self, provider=None, *, transport=None, config=None):
         self.config = config or ModelConfig.from_env(provider)
@@ -521,7 +531,7 @@ class ModelGateway:
         self.last_result = None
         self.last_error = None
 
-    def _request_provider(self, max_output_tokens=None):
+    def _request_provider(self, max_output_tokens=None, temperature=None):
         # Adapter completion/stream metadata belongs to one request. The public
         # provider remains a configuration template, never shared inference state.
         config = self.config
@@ -529,6 +539,11 @@ class ModelGateway:
             if type(max_output_tokens) is not int or max_output_tokens <= 0:
                 raise ModelError("configuration")
             config = replace(config, max_output_tokens=min(config.max_output_tokens, max_output_tokens))
+        if temperature is not None:
+            if (isinstance(temperature, bool) or not isinstance(temperature, (int, float))
+                    or not math.isfinite(temperature) or temperature < 0):
+                raise ModelError("configuration")
+            config = replace(config, temperature=float(temperature))
         return type(self.provider)(config, transport=self.provider.transport)
 
     def validate_request(self, messages, system="", model=None) -> int:
@@ -539,10 +554,16 @@ class ModelGateway:
         """
         return self._request_provider().validate_request(messages, system, model)
 
-    def chat(self, messages, system="", model=None, max_output_tokens=None) -> ModelResult:
+    def chat(self, messages, system="", model=None, max_output_tokens=None, temperature=None) -> ModelResult:
+        """Run one request. ``temperature`` pins sampling for this call only.
+
+        A classification (such as picking managed record ids) must not be
+        sampled: identical input has to produce identical output. Free-form
+        generation leaves the parameter unset and keeps the provider default.
+        """
         try:
             self.provider._check()
-            result = self._request_provider(max_output_tokens).chat(messages, system, model)
+            result = self._request_provider(max_output_tokens, temperature).chat(messages, system, model)
             self.last_result = result
             self.last_error = None
             return result
