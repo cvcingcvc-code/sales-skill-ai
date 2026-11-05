@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from agent_skill.api_server import create_app
 from customer_service.store import Store
 from core.model_gateway import ModelConfig, ModelError, ModelGateway, ModelResult
+from core.version import PROJECT_VERSION
 
 
 class FakeGateway:
@@ -90,6 +91,7 @@ class TestSupportAPI(unittest.TestCase):
         health = self.client.get("/skill/health")
         self.assertEqual(health.status_code, 200)
         self.assertEqual(health.json()["status"], "ok")
+        self.assertEqual(health.json()["version"], PROJECT_VERSION)
         scenarios = self.client.get("/skill/scenarios")
         self.assertEqual(scenarios.status_code, 200)
         self.assertTrue(scenarios.json()["scenarios"])

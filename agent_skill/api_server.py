@@ -20,6 +20,7 @@ from agent_skill.support_api import build_router
 from core.model_gateway import ModelError, ModelGateway
 from core.scorer import ScoringError
 from core.skill_engine import SkillEngine
+from core.version import PROJECT_VERSION
 from customer_service.service import CustomerService
 from customer_service.store import Store, SupportError
 from scenarios.scenario_loader import list_scenarios
@@ -32,7 +33,7 @@ def _score_payload(score):
 
 
 def create_app(store=None, gateway=None):
-    app = FastAPI(title="AI Sales Agent", version="2.0.0")
+    app = FastAPI(title="AI Sales Agent", version=PROJECT_VERSION)
     store = store if store is not None else Store()
     gateway = gateway if gateway is not None else ModelGateway()
     service = CustomerService(store=store, gateway=gateway)
@@ -69,7 +70,7 @@ def create_app(store=None, gateway=None):
 
     @app.get("/skill/health")
     def health():
-        return {"status": "ok", "service": "sales-skill-ai", "version": "2.0.0"}
+        return {"status": "ok", "service": "sales-skill-ai", "version": PROJECT_VERSION}
 
     @app.get("/skill/scenarios")
     def scenarios(difficulty: str | None = None):

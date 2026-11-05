@@ -1,6 +1,17 @@
 # 本地模型部署与验收
 
-本轮先完成应用开发，模型保持暂停：没有安装 Ollama、下载模型权重或执行真实模型请求。下面是以后在自己电脑上操作的步骤。设备尚未确定，因此同时提供 Windows、macOS、Linux 的通用路径；具体系统、驱动和模型支持以官方当时文档为准。如果想先按阶段排查应用、商品录入和人工接管，再尝试 Ollama，请看[本地逐步调试指南](DEBUGGING_GUIDE_ZH.md)。
+本文档说明如何在自己的电脑上装好模型、让网站真正用上它，并跑通真实验收。
+
+**已验证的参考环境（v1.0.0-beta.1）：**Windows 11 + Python 3.12.13 + Ollama 0.40.14
++ `qwen2.5:3b`（3.1B / Q4_K_M 量化，1.9 GB）+ NVIDIA GTX 1660 Ti（CUDA 可用，6 GB 显存）。
+在该环境下 `scripts/verify_live.py --provider ollama` 返回 `PASS`、退出码 `0`，连续多次结果一致。
+**这是一条被验证过的路径，不是对任何设备都成立的性能或可用性保证。**
+
+下面同时提供 Windows、macOS、Linux 的通用路径；具体系统、驱动和模型支持以官方当时文档为准。
+如果想先按阶段排查应用、商品录入和人工接管，再尝试 Ollama，请看[本地逐步调试指南](DEBUGGING_GUIDE_ZH.md)。
+
+> **重要：运行本项目不会自动下载任何模型权重，也不会替你安装 Ollama。**
+> 模型由你自己按设备条件选择并拉取，步骤见第 2、3 节。
 
 ## 1. 先运行应用，不接模型
 
@@ -66,7 +77,8 @@ OLLAMA_MODEL=
 - macOS：使用官网当前 macOS 安装包，并确认系统版本和芯片受支持。
 - Linux：按[官方 Linux 说明](https://docs.ollama.com/linux)选择支持的安装路径，先阅读安装步骤和需要的系统权限；GPU 用户另核对驱动支持。不需要盲目执行未经阅读的远程安装脚本。
 
-本轮不替用户执行安装或模型下载。安装时保留 TLS、签名和完整性校验，不使用来历不明的安装包。
+本项目不替用户执行安装或模型下载。安装时保留 TLS、签名和完整性校验，不使用来历不明的安装包。
+Windows 用户请从官网下载官方安装包，并核对数字签名（发布者应为 `Ollama Inc.`）。
 
 以后在模型电脑上确认服务：
 
@@ -87,6 +99,11 @@ ollama list
 ```
 
 第一次 `pull` 需要联网并下载权重，确认磁盘空间和流量后再运行。以本机 `ollama list` 的准确名称为准，填入 `OLLAMA_MODEL`。安装服务和下载权重以后，应用仍先保持 `MODEL_ENABLED=false`。
+
+> **踩坑提示：手动放入的 blob 会被启动清理。** Ollama 服务启动时会删除没有 manifest 引用的
+> blob（日志出现 `total unused blobs removed: N`）。如果你出于离线等原因手动把权重文件放进
+> 模型目录，**必须紧接着执行一次 `ollama pull <标签>`** 让 Ollama 自己写好 manifest，
+> 否则下一次启动时大权重可能已被删除。
 
 ## 4. 配置、启用和重启
 
@@ -128,6 +145,11 @@ MODEL_TIMEOUT_SECONDS=60
 
 小模型需要正确输出资料选择 JSON；能生成聊天文字不代表通过本项目合约。模型不支持当前输出要求时，保留失败记录，选择合适模型或单独调整提示词并补回归测试。真实模型通过前，验收报告仍保留“未验收”，不能把离线测试数量当作真实 AI 效果。
 
+**关于模型输出稳定性。** 资料选择是分类任务，不是创作任务。项目对这次调用固定 `temperature=0`，
+保证同一输入得到同一结论；Provider 默认采样下结论会随机翻转。若你换用其他模型后出现
+“同一问题有时转人工、有时按目录作答”，先确认请求确实带上了 `temperature=0`，
+再考虑模型是否太小、是否支持中文 JSON 输出。
+
 ## 6. 网站与模型的连接方式
 
 最简单的本地方式是：浏览器→本机 API→同一电脑的 Ollama。访客页是 `http://127.0.0.1:8080/chat`，工作台是 `http://127.0.0.1:8501`；启动命令见 [README](../README.md)。浏览器只访问应用 API，不能直接请求 Ollama。
@@ -137,3 +159,22 @@ MODEL_TIMEOUT_SECONDS=60
 应用暂按单 worker、单机 SQLite 运行。公开访问前还要完成 HTTPS、私有后台、代理限流、数据库备份和保留策略，见 [DEPLOYMENT.md](DEPLOYMENT.md)。Ollama API 无云端调用费不等于计算成本为零；设备、电力和运维成本由部署者评估。
 
 如以后临时改用 DeepSeek，显式切换 `LLM_PROVIDER=deepseek`，安全设置相应密钥/当前模型/API 根地址、启用后重启，再用 `--provider deepseek` 验收。Provider 不会在失败后自动互相切换。
+
+## 7. 常见错误排查
+
+先看后台「模型状态」和验收脚本的退出码，再对照下表。**不要**用切 Mock 的方式绕过失败。
+
+| 现象 | 常见原因 | 处理 |
+| --- | --- | --- |
+| 验收退出码 `2`，`reason=disabled` | `.env` 里 `MODEL_ENABLED` 仍是 `false`，或终端里已设置同名环境变量 | 改 `.env` 为 `true`，并在**新终端**里确认没有残留的 `MODEL_ENABLED=false`；`.env` 只补充进程环境里没有的变量 |
+| 验收退出码 `2`，`reason=unavailable` | Ollama 服务没启动、端口不对、或被系统代理劫持 | `ollama list` 确认服务在跑；核对 `OLLAMA_BASE_URL`；确认 `NO_PROXY`/`no_proxy` 包含 `127.0.0.1`，否则请求会被代理接管并返回 502 |
+| 验收退出码 `2`，`reason=configuration` | `OLLAMA_MODEL` 为空或与 `ollama list` 中的标签不一致 | 把 `.env` 的 `OLLAMA_MODEL` 填成 `ollama list` 里**完全一致**的标签（区分大小写） |
+| 验收退出码 `1`，`reason=managed_product_reply_not_verified` | 模型选出的 ID 不合法、或模型判定需要人工 | 看后台会话里模型原始输出；确认模型支持中文 JSON 输出、且资料里确实写明了用户问的那件事；换更大的模型重试。**不要**改成写死返回值 |
+| 访客答复里 `model_status` 是 `DISABLED` | 模型被主动关闭 | 这是预期状态，不是故障；改 `.env` 并重启两个服务 |
+| 访客答复里 `model_status` 是 `MOCK` | 处于离线 Mock 测试或合成演示 | 真实调用不会出现 `MOCK`；`MOCK` 不能用来宣称真实模型可用 |
+| 答复里没有价格，或价格与后台不一致 | 该商品被下架、模型选错了记录、或价格被当成不可回答的字段 | 先在后台核对商品状态与价格（单位是人民币分）；再确认模型选中的 ID 是不是这条商品 |
+| 模型一直要求转人工 | 资料里没有写用户问的那件事 | 补录可核实的事实（价格、规格、保修政策等），或确认这是模型的正确行为——无依据就应转人工 |
+| `scripts/run_tests.py` 报 `Network connections are disabled` | 离线守卫在工作 | 这是**预期**行为：离线回归不允许任何出网。`network_attempts` 必须为 `0` |
+| Windows 上离线回归有 8–10 个错误用例 | SQLite WAL 并发写的 Windows 平台限制 | 本版本刻意不修，见 [CHANGELOG.md](../CHANGELOG.md#known-issues)；这是测试环境问题，不影响产品运行 |
+| `pip install -r requirements.lock` 报缺包 | Python 版本不是 3.12 | 确认 `python --version` 为 3.12.x，重新建虚拟环境 |
+| Streamlit 页面能开但管理端登录失败 | API 与工作台读到的 `ADMIN_API_TOKEN` 不一致，或令牌没配 | 两个服务用同一份 `.env` 重新启动；令牌只在本机输入，不要放进 URL |
