@@ -1,6 +1,9 @@
-# V2 本地运行与云端部署说明
+# 本地运行与云端部署说明
 
-本轮先完成应用，模型保持暂停：不安装 Ollama、不下载权重、不执行真实模型请求，**没有进行真实公网部署**。以下 systemd/Nginx 为部署方需核对的示例，未在生产服务器验证。Windows/macOS/Linux 与以后模型安装另见 [LOCAL_MODEL_DEPLOYMENT.md](LOCAL_MODEL_DEPLOYMENT.md)，业务操作见 [USER_GUIDE.md](USER_GUIDE.md)。
+应用可按「模型关闭」或「启用本地模型」两种方式运行；后者已在 Windows + Ollama 0.40.14 +
+`qwen2.5:3b` 上完成真实验收。**没有进行真实公网部署。** 以下 systemd/Nginx 为部署方需核对的示例，
+未在生产服务器验证。Windows/macOS/Linux 与模型安装另见 [LOCAL_MODEL_DEPLOYMENT.md](LOCAL_MODEL_DEPLOYMENT.md)，
+业务操作见 [USER_GUIDE.md](USER_GUIDE.md)。
 
 ## 准备应用与配置
 
