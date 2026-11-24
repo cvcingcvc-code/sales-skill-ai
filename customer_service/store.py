@@ -6,7 +6,8 @@ import math
 import os
 import secrets
 import sqlite3
-from contextlib import contextmanager
+import time
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -32,13 +33,32 @@ def _text(value, field, limit, required=False):
         raise SupportError("invalid_input", f"{field} 内容无效或超过长度限制")
     return value.strip()
 
-
+def run_with_sqlite_retry(fn, attempts=12, base_delay=0.02):
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            message = str(exc).lower()
+            if attempt + 1 < attempts and any(token in message for token in ("locked", "busy", "readonly")):
+                time.sleep(base_delay * (attempt + 1))
+                continue
+            raise
+            
 class Store:
     def __init__(self, db_path=None):
         self.db_path = str(db_path or os.getenv("SUPPORT_DB_PATH", "./data/db/support.db"))
         os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
-        with self.connection() as conn:
-            conn.executescript("""
+        def enable_wal():
+            with closing(sqlite3.connect(self.db_path, timeout=10)) as conn:
+                conn.execute("PRAGMA busy_timeout=10000")
+                mode = conn.execute("PRAGMA journal_mode").fetchone()
+                if not mode or str(mode[0]).lower() != "wal":
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    
+        run_with_sqlite_retry(enable_wal)
+        def init_schema():
+                with self.connection() as conn:
+                conn.executescript("""
                 CREATE TABLE IF NOT EXISTS products (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL,
                     price_cents INTEGER NOT NULL CHECK(price_cents >= 0),
@@ -88,20 +108,21 @@ class Store:
                     prompt_tokens INTEGER, completion_tokens INTEGER, estimated_cost REAL,
                     created_at TEXT NOT NULL
                 );
-            """)
+                """)
             # Additive migration for existing V1 databases; retain all legacy rows.
-            conn.execute("BEGIN IMMEDIATE")
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)")}
-            for name, declaration in (("updated_at", "TEXT NOT NULL DEFAULT ''"),
+                conn.execute("BEGIN IMMEDIATE")
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(conversations)")}
+                for name, declaration in (("updated_at", "TEXT NOT NULL DEFAULT ''"),
                                       ("last_activity_at", "TEXT NOT NULL DEFAULT ''"),
                                       ("ai_epoch", "INTEGER NOT NULL DEFAULT 0")):
-                if name not in columns:
-                    conn.execute(f"ALTER TABLE conversations ADD COLUMN {name} {declaration}")
-            conn.execute("UPDATE conversations SET updated_at=created_at WHERE updated_at=''")
-            conn.execute("""UPDATE conversations SET last_activity_at=COALESCE(
+                    if name not in columns:
+                        conn.execute(f"ALTER TABLE conversations ADD COLUMN {name} {declaration}")
+                conn.execute("UPDATE conversations SET updated_at=created_at WHERE updated_at=''")
+                conn.execute("""UPDATE conversations SET last_activity_at=COALESCE(
                 (SELECT MAX(created_at) FROM messages WHERE conversation_id=conversations.id),created_at)
                 WHERE last_activity_at=''""")
-
+        run_with_sqlite_retry(init_schema)
+        
     @staticmethod
     def _actor(actor):
         if actor not in ("admin", "visitor"):
@@ -132,10 +153,10 @@ class Store:
     @contextmanager
     def connection(self):
         conn = sqlite3.connect(self.db_path, timeout=10)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA journal_mode=WAL")
         try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout=10000")
+            conn.execute("PRAGMA foreign_keys=ON")
             with conn:
                 yield conn
         finally:
