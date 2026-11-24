@@ -20,7 +20,7 @@ import secrets
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 
-from customer_service.store import SupportError
+from customer_service.store import SupportError, run_with_sqlite_retry
 
 
 _COST_SCALE = 1_000_000_000
@@ -90,13 +90,15 @@ class RateLimiter:
 
     def __init__(self, store):
         self.store = store
-        with self.store.connection() as conn:
-            conn.execute("""CREATE TABLE IF NOT EXISTS rate_limit_buckets (
-                bucket TEXT NOT NULL, key_hash TEXT NOT NULL,
-                window_seconds INTEGER NOT NULL, expires_at REAL NOT NULL,
-                hits INTEGER NOT NULL,
-                PRIMARY KEY(bucket,key_hash,window_seconds))""")
-            conn.execute("CREATE INDEX IF NOT EXISTS rate_limit_expiry ON rate_limit_buckets(expires_at)")
+        def _init_schema():
+            with self.store.connection() as conn:
+                conn.execute("""CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+                    bucket TEXT NOT NULL, key_hash TEXT NOT NULL,
+                    window_seconds INTEGER NOT NULL, expires_at REAL NOT NULL,
+                    hits INTEGER NOT NULL,
+                    PRIMARY KEY(bucket,key_hash,window_seconds))""")
+                conn.execute("CREATE INDEX IF NOT EXISTS rate_limit_expiry ON rate_limit_buckets(expires_at)")
+        run_with_sqlite_retry(_init_schema)
 
     def check(self, bucket, key, limit, window_seconds, now=None):
         if (not isinstance(bucket, str) or not re.fullmatch(r"[A-Za-z0-9:_-]{1,100}", bucket)
@@ -106,26 +108,29 @@ class RateLimiter:
             raise SupportError("configuration", "请求限流配置无效，请联系管理员检查。", 503)
         stamp = _timestamp(now)
         key_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        retry_after = None
-        with self.store.connection() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            # Each request does bounded maintenance; no unbounded event history.
-            conn.execute("""DELETE FROM rate_limit_buckets WHERE rowid IN (
-                SELECT rowid FROM rate_limit_buckets WHERE expires_at<=? LIMIT 256)""", (stamp,))
-            row = conn.execute("""SELECT hits,expires_at FROM rate_limit_buckets
-                WHERE bucket=? AND key_hash=? AND window_seconds=? AND expires_at>?""",
-                (bucket, key_hash, window_seconds, stamp)).fetchone()
-            if limit == 0 or (row and row["hits"] >= limit):
-                retry_after = max(1, math.ceil(row["expires_at"] - stamp)) if row else window_seconds
-            elif row:
-                conn.execute("""UPDATE rate_limit_buckets SET hits=hits+1
-                    WHERE bucket=? AND key_hash=? AND window_seconds=?""",
-                    (bucket, key_hash, window_seconds))
-            else:
-                conn.execute("""INSERT INTO rate_limit_buckets VALUES(?,?,?,?,1)
-                    ON CONFLICT(bucket,key_hash,window_seconds) DO UPDATE
-                    SET expires_at=excluded.expires_at,hits=1""",
-                             (bucket, key_hash, window_seconds, stamp + window_seconds))
+        def _check():
+            retry_after = None
+            with self.store.connection() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                # Each request does bounded maintenance; no unbounded event history.
+                conn.execute("""DELETE FROM rate_limit_buckets WHERE rowid IN (
+                    SELECT rowid FROM rate_limit_buckets WHERE expires_at<=? LIMIT 256)""", (stamp,))
+                row = conn.execute("""SELECT hits,expires_at FROM rate_limit_buckets
+                    WHERE bucket=? AND key_hash=? AND window_seconds=? AND expires_at>?""",
+                    (bucket, key_hash, window_seconds, stamp)).fetchone()
+                if limit == 0 or (row and row["hits"] >= limit):
+                    retry_after = max(1, math.ceil(row["expires_at"] - stamp)) if row else window_seconds
+                elif row:
+                    conn.execute("""UPDATE rate_limit_buckets SET hits=hits+1
+                        WHERE bucket=? AND key_hash=? AND window_seconds=?""",
+                        (bucket, key_hash, window_seconds))
+                else:
+                    conn.execute("""INSERT INTO rate_limit_buckets VALUES(?,?,?,?,1)
+                        ON CONFLICT(bucket,key_hash,window_seconds) DO UPDATE
+                        SET expires_at=excluded.expires_at,hits=1""",
+                                 (bucket, key_hash, window_seconds, stamp + window_seconds))
+            return retry_after
+        retry_after = run_with_sqlite_retry(_check)
         if retry_after is not None:
             error = SupportError("rate_limited", "请求过于频繁，请稍后重试。", 429)
             error.retry_after = retry_after
