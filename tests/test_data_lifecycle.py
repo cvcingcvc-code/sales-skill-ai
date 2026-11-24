@@ -7,6 +7,7 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -331,18 +332,19 @@ class LegacyMigrationTests(unittest.TestCase):
     def test_additive_migration_preserves_v1_data_and_latest_activity(self):
         with tempfile.TemporaryDirectory() as temp:
             path = str(Path(temp) / "legacy.db")
-            with sqlite3.connect(path) as conn:
-                conn.executescript("""
-                    CREATE TABLE conversations(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'ai',need_summary TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
-                    CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        conversation_id TEXT NOT NULL REFERENCES conversations(id),role TEXT NOT NULL,
-                        content TEXT NOT NULL,source TEXT NOT NULL,created_at TEXT NOT NULL);
-                """)
-                conn.execute("INSERT INTO conversations VALUES(?,?,?,?,?)", ("legacy", "hashed", "ai", "keep summary", "2020-01-01T00:00:00+00:00"))
-                conn.execute("INSERT INTO messages(conversation_id,role,content,source,created_at) VALUES(?,?,?,?,?)",
-                             ("legacy", "user", "keep message", "customer", "2020-02-01T00:00:00+00:00"))
-                conn.execute("INSERT INTO conversations VALUES(?,?,?,?,?)", ("empty", "hashed", "ai", "", "2020-03-01T00:00:00+00:00"))
+            with closing(sqlite3.connect(path)) as conn:
+                with conn:
+                    conn.executescript("""
+                        CREATE TABLE conversations(id TEXT PRIMARY KEY,token_hash TEXT NOT NULL,
+                            status TEXT NOT NULL DEFAULT 'ai',need_summary TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
+                        CREATE TABLE messages(id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            conversation_id TEXT NOT NULL REFERENCES conversations(id),role TEXT NOT NULL,
+                            content TEXT NOT NULL,source TEXT NOT NULL,created_at TEXT NOT NULL);
+                    """)
+                    conn.execute("INSERT INTO conversations VALUES(?,?,?,?,?)", ("legacy", "hashed", "ai", "keep summary", "2020-01-01T00:00:00+00:00"))
+                    conn.execute("INSERT INTO messages(conversation_id,role,content,source,created_at) VALUES(?,?,?,?,?)",
+                                 ("legacy", "user", "keep message", "customer", "2020-02-01T00:00:00+00:00"))
+                    conn.execute("INSERT INTO conversations VALUES(?,?,?,?,?)", ("empty", "hashed", "ai", "", "2020-03-01T00:00:00+00:00"))
             store = Store(path)
             result = store.get_admin_conversation("legacy")
             self.assertEqual(result["need_summary"], "keep summary")
