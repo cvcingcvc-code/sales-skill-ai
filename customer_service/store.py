@@ -57,7 +57,7 @@ class Store:
                     
         run_with_sqlite_retry(enable_wal)
         def init_schema():
-                with self.connection() as conn:
+            with self.connection() as conn:
                 conn.executescript("""
                 CREATE TABLE IF NOT EXISTS products (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL,
